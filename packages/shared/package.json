@@ -219,6 +219,10 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./visualize": {
+      "types": "./src/visualize.ts",
+      "import": "./src/visualize.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

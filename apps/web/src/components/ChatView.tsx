@@ -4008,6 +4008,23 @@ export default function ChatView(props: ChatViewProps) {
     },
     [composerRef, scheduleComposerFocus],
   );
+  // A visualization's follow-up lands in the composer; the user sends it.
+  const draftVisualizationFollowUp = useCallback(
+    (prompt: string) => {
+      const composer = composerRef.current;
+      if (!composer) return;
+      if (!composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+        return;
+      }
+      scheduleComposerFocus();
+    },
+    [composerRef, scheduleComposerFocus],
+  );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
@@ -9830,6 +9847,7 @@ export default function ChatView(props: ChatViewProps) {
                       agentPanelModel,
                       onOpenAgents: addAgentsSurface,
                       onUseArtifactTemplate: useArtifactTemplate,
+                      onVisualizationFollowUp: draftVisualizationFollowUp,
                       ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                     }
                   : {})}

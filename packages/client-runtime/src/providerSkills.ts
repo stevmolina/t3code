@@ -3,6 +3,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import { withBuiltinVisualizeSkill } from "@t3tools/shared/visualize";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
@@ -95,6 +96,8 @@ export function resolveProviderSkillSourceKind(
       return "personal";
     case "system":
       return "system";
+    case "app":
+      return "app";
     case undefined:
     case "":
       return "other";
@@ -111,11 +114,21 @@ function resolveProviderWorkspaceSnapshot(
   return provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
 }
 
+// Keyed by the provider's list so callers keep a stable array across renders.
+const skillsWithBuiltins = new WeakMap<ServerProvider["skills"], ServerProvider["skills"]>();
+
+/** The provider's skills for a workspace, plus T3 Code's built-in skills it lacks. */
 export function resolveProviderSkillsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,
 ): ServerProvider["skills"] {
-  return resolveProviderWorkspaceSnapshot(provider, cwd)?.skills ?? provider.skills;
+  const skills = resolveProviderWorkspaceSnapshot(provider, cwd)?.skills ?? provider.skills;
+  let merged = skillsWithBuiltins.get(skills);
+  if (merged === undefined) {
+    merged = withBuiltinVisualizeSkill(skills);
+    skillsWithBuiltins.set(skills, merged);
+  }
+  return merged;
 }
 
 export function resolveProviderSlashCommandsForCwd(

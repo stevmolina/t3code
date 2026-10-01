@@ -36,6 +36,7 @@ import {
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { hasProviderVisualizeSkill } from "@t3tools/shared/visualize";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -77,6 +78,8 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
+import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import { expandVisualizeSkill, mentionsVisualizeSkill } from "../builtinSkills/visualizeSkill.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -491,6 +494,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
+  // Read only to learn which skills a provider ships; absent in focused tests.
+  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry);
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1592,6 +1597,45 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  /**
+   * Inlines T3 Code's Visualize skill when the turn invokes `$visualize` and
+   * the provider has no skill of that name to resolve it natively. Fragments go
+   * under the attachments directory, which agents may already write to.
+   */
+  const withBuiltinVisualizeSkill = Effect.fn("withBuiltinVisualizeSkill")(function* (
+    input: ProviderSendTurnInput,
+    instanceId: ProviderInstanceId,
+  ) {
+    if (
+      input.input === undefined ||
+      !mentionsVisualizeSkill(input.input) ||
+      Option.isNone(providerRegistry)
+    ) {
+      return input;
+    }
+    const providers = yield* providerRegistry.value.getProviders;
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    if (
+      provider === undefined ||
+      hasProviderVisualizeSkill(provider.skills) ||
+      (provider.workspaceSnapshots ?? []).some((snapshot) =>
+        hasProviderVisualizeSkill(snapshot.skills),
+      )
+    ) {
+      return input;
+    }
+    const outputDirectory = pathService.join(
+      serverConfig.attachmentsDir,
+      "visualizations",
+      input.threadId.replace(/[^A-Za-z0-9_-]/g, "_"),
+    );
+    yield* fileSystem.makeDirectory(outputDirectory, { recursive: true }).pipe(Effect.ignore);
+    const expanded = expandVisualizeSkill(input.input, outputDirectory);
+    return expanded.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+      ? { ...input, input: expanded }
+      : input;
+  });
+
   const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
@@ -1737,6 +1781,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
+      const adapterInput = yield* withBuiltinVisualizeSkill(input, routed.instanceId);
       yield* Effect.annotateCurrentSpan({
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
@@ -1768,7 +1813,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               model: input.modelSelection?.model,
               runtimeMode: routed.runtimeMode,
             });
-            const turn = yield* routed.adapter.sendTurn(input).pipe(
+            const turn = yield* routed.adapter.sendTurn(adapterInput).pipe(
               Effect.tapError((error) =>
                 analytics.record("provider.turn.rejected", {
                   provider: routed.adapter.provider,

@@ -281,6 +281,7 @@ interface TimelineRowSharedState {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
+  onVisualizationFollowUp: ((prompt: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
@@ -430,6 +431,8 @@ interface MessagesTimelineProps {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onRunShellCommand?: (command: string) => void;
+  /** Puts a follow-up prompt from an inline visualization into the composer. */
+  onVisualizationFollowUp?: (prompt: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -500,6 +503,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onRunShellCommand,
+  onVisualizationFollowUp,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1155,6 +1159,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onVisualizationFollowUp,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -1191,6 +1196,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onVisualizationFollowUp,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -2404,6 +2410,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
             onRunShellCommand={ctx.onRunShellCommand}
             onImageExpand={ctx.onImageExpand}
+            renderVisualizations
+            onVisualizationFollowUp={ctx.onVisualizationFollowUp}
           />
         </AssistantCitationSource>
         <AssistantChangedFilesSection

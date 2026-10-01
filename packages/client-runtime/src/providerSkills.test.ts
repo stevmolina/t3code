@@ -1,5 +1,6 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { BUILTIN_VISUALIZE_SKILL } from "@t3tools/shared/visualize";
 
 import {
   dedupeProviderSkillsByName,
@@ -241,6 +242,7 @@ describe("workspace provider snapshots", () => {
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
       { name: "project", path: "/workspace/project-a/SKILL.md", enabled: true },
+      BUILTIN_VISUALIZE_SKILL,
     ]);
     expect(resolveProviderSlashCommandsForCwd(provider, "/workspace/project-a")).toEqual([
       { name: "project" },
@@ -248,7 +250,24 @@ describe("workspace provider snapshots", () => {
   });
 
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
-    expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
+    expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual([
+      ...provider.skills,
+      BUILTIN_VISUALIZE_SKILL,
+    ]);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
+  });
+
+  it("offers the built-in Visualize skill only when the provider has none", () => {
+    const nativeVisualize = {
+      name: "visualize",
+      path: "/home/me/.codex/plugins/cache/openai-bundled/visualize/1.0.0/skills/visualize/SKILL.md",
+      enabled: true,
+    };
+    const withNative = { ...provider, skills: [nativeVisualize], workspaceSnapshots: [] };
+    expect(resolveProviderSkillsForCwd(withNative, null)).toEqual([nativeVisualize]);
+    expect(resolveProviderSkillsForCwd(provider, null)).toBe(
+      resolveProviderSkillsForCwd(provider, null),
+    );
+    expect(resolveProviderSkillSourceKind(BUILTIN_VISUALIZE_SKILL)).toBe("app");
   });
 });

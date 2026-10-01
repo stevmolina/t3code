@@ -23,7 +23,12 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAssetUrl,
+  readVisualizationFragment,
+  resolveAsset,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -508,6 +513,47 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues visualization URLs only for readable fragments", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-visualization-" });
+      const fragmentPath = path.join(directory, "chart.html");
+      yield* fs.writeFileString(fragmentPath, '<div id="chart">ok</div>');
+      const canonicalFile = yield* fs.realPath(fragmentPath);
+
+      const issued = yield* issueAssetUrl({
+        resource: { _tag: "visualization", path: fragmentPath },
+      });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toEqual({
+        kind: "visualization",
+        path: canonicalFile,
+      });
+      expect(yield* readVisualizationFragment(canonicalFile)).toBe('<div id="chart">ok</div>');
+
+      // A fragment removed after its URL was issued reads as unavailable.
+      yield* fs.remove(fragmentPath);
+      expect(yield* readVisualizationFragment(canonicalFile)).toBeNull();
+
+      const missing = yield* issueAssetUrl({
+        resource: { _tag: "visualization", path: fragmentPath },
+      }).pipe(Effect.flip);
+      expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+
+      const documentPath = path.join(directory, "page.html");
+      yield* fs.writeFileString(documentPath, "<!doctype html><html><body>x</body></html>");
+      for (const requestedPath of [documentPath, "chart.html", path.join(directory, "a.png")]) {
+        const refused = yield* issueAssetUrl({
+          resource: { _tag: "visualization", path: requestedPath },
+        }).pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(AssetPreviewTypeValidationError);
+      }
     }).pipe(Effect.provide(testLayer)),
   );
 

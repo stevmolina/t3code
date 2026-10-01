@@ -89,6 +89,12 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import {
+  fenceVisualizeCitations,
+  parseVisualizeCitation,
+  VISUALIZE_CITATION_FENCE_LANGUAGE,
+  type VisualizeCitation,
+} from "@t3tools/shared/visualize";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
@@ -201,6 +207,7 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { VisualizationDialog, VisualizationFrame } from "./VisualizationFrame";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -236,6 +243,10 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** Render Visualize references as live pages. Agent output only; never user text. */
+  renderVisualizations?: boolean | undefined;
+  /** Receives a follow-up prompt a visualization asks to send. */
+  onVisualizationFollowUp?: ((prompt: string) => void) | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -1002,6 +1013,7 @@ function MarkdownCodeBlock({
   onRunShellCommand,
   isStreaming,
   renderDiagram = false,
+  visualization = null,
   children,
 }: {
   code: string;
@@ -1011,6 +1023,8 @@ function MarkdownCodeBlock({
   onRunShellCommand?: ((command: string) => void) | undefined;
   isStreaming: boolean;
   renderDiagram?: boolean;
+  /** A Visualize reference: the rendered view is the live page instead of a Mermaid diagram. */
+  visualization?: VisualizeCitation | null;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -1022,8 +1036,13 @@ function MarkdownCodeBlock({
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const [expanded, setExpanded] = useState(false);
   const showDiagram = renderDiagram && !showSource && !diagramFailed;
-  const sourceToggleLabel = showSource ? "Show diagram" : "Show source";
+  const sourceToggleLabel = showSource
+    ? visualization
+      ? "Show visualization"
+      : "Show diagram"
+    : "Show source";
 
   // Reset the toggle on fence edits, gated so streaming blocks (re-rendered
   // per token) pay no state updates here.
@@ -1093,7 +1112,12 @@ function MarkdownCodeBlock({
     <div
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
-      data-mermaid={renderDiagram ? (showDiagram ? "diagram" : "source") : undefined}
+      data-mermaid={
+        renderDiagram && !visualization ? (showDiagram ? "diagram" : "source") : undefined
+      }
+      data-visualize={
+        renderDiagram && visualization ? (showDiagram ? "page" : "source") : undefined
+      }
       data-wrap={wrapped ? "true" : "false"}
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
@@ -1129,6 +1153,24 @@ function MarkdownCodeBlock({
                 {showSource ? <EyeIcon className="size-3" /> : <Code2Icon className="size-3" />}
               </TooltipTrigger>
               <TooltipPopup side="top">{sourceToggleLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {showDiagram && visualization?.mode === "wide" ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost-muted"
+                    size="icon-xs"
+                    onClick={() => setExpanded(true)}
+                    aria-label="Expand visualization"
+                  />
+                }
+              >
+                <Maximize2Icon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Expand visualization</TooltipPopup>
             </Tooltip>
           ) : null}
           {showDiagram ? null : (
@@ -1186,7 +1228,14 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {showDiagram ? (
+      {showDiagram && visualization ? (
+        <ChatMarkdownVisualization
+          key={code}
+          citation={visualization}
+          theme={theme}
+          onUnavailable={handleDiagramError}
+        />
+      ) : showDiagram ? (
         <MermaidDiagram
           key={`${theme}:${code}`}
           code={code}
@@ -1198,6 +1247,18 @@ function MarkdownCodeBlock({
       ) : (
         children
       )}
+      {expanded && showDiagram && visualization ? (
+        <VisualizationDialog
+          title={visualization.title ?? "Visualization"}
+          onClose={() => setExpanded(false)}
+        >
+          <ChatMarkdownVisualization
+            citation={visualization}
+            theme={theme}
+            onUnavailable={() => setExpanded(false)}
+          />
+        </VisualizationDialog>
+      ) : null}
     </div>
   );
 }
@@ -2425,6 +2486,8 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  renderVisualizations = false,
+  onVisualizationFollowUp,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2827,12 +2890,14 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onVisualizationFollowUp,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
       linkedThreadPullRequestFor,
+      renderVisualizations,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2858,12 +2923,14 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onVisualizationFollowUp,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
       linkedThreadPullRequestFor,
+      renderVisualizations,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2886,6 +2953,41 @@ function useChatMarkdownState({
 const ChatMarkdownRendererContext = React.createContext<
   ReturnType<typeof useChatMarkdownState>["componentState"]
 >(null!);
+
+/** A Visualize reference's live page, scoped to the message's environment and thread. */
+function ChatMarkdownVisualization(props: {
+  citation: VisualizeCitation;
+  theme: "light" | "dark";
+  onUnavailable: () => void;
+}) {
+  const { environmentId, threadRef, onVisualizationFollowUp, openDeferredMarkdownLink } = use(
+    ChatMarkdownRendererContext,
+  );
+  const { onUnavailable } = props;
+  const missingEnvironment = environmentId === null;
+  useEffect(() => {
+    if (missingEnvironment) onUnavailable();
+  }, [missingEnvironment, onUnavailable]);
+  const openLink = useCallback(
+    (url: string) => {
+      void openDeferredMarkdownLink(url).catch(() => undefined);
+    },
+    [openDeferredMarkdownLink],
+  );
+  if (environmentId === null) return null;
+  return (
+    <VisualizationFrame
+      citation={props.citation}
+      environmentId={environmentId}
+      threadId={threadRef?.threadId ?? null}
+      theme={props.theme}
+      onUnavailable={onUnavailable}
+      onFollowUp={onVisualizationFollowUp}
+      onOpenLink={openLink}
+      className="p-3"
+    />
+  );
+}
 
 // Screen readers take a heading's level from its tag, which would let a `#` in a
 // message outrank the heading placed above it. Override only the exposed level:
@@ -3416,9 +3518,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      resolvedTheme,
+      diffThemeName,
+      isStreaming,
+      onRunShellCommand,
+      renderVisualizations,
+      text,
+    } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3450,11 +3557,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </RenderErrorBoundary>
     );
     const renderMermaid = !isStreaming && isMermaidFenceLanguage(language);
+    const visualization =
+      renderVisualizations && language === VISUALIZE_CITATION_FENCE_LANGUAGE
+        ? parseVisualizeCitation(codeBlock.code)
+        : null;
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
         language={language}
-        fenceTitle={fenceTitle}
+        fenceTitle={visualization ? (visualization.title ?? "Visualization") : fenceTitle}
         theme={resolvedTheme}
         onRunShellCommand={
           onRunShellCommand && !isStreaming && isClosedCodeFence(node, text)
@@ -3462,7 +3573,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             : undefined
         }
         isStreaming={isStreaming}
-        renderDiagram={renderMermaid}
+        renderDiagram={renderMermaid || (visualization !== null && !isStreaming)}
+        visualization={visualization}
       >
         {codeFallback}
       </MarkdownCodeBlock>
@@ -3471,13 +3583,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
 } satisfies Components;
 
 function ChatMarkdown({
-  text,
+  text: sourceText,
   className,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  renderVisualizations = false,
   ...props
 }: ChatMarkdownProps) {
+  // Each reference line becomes its own fence, so the JSON survives Markdown
+  // parsing and the code block renderer can swap it for the page.
+  const text = useMemo(
+    () => (renderVisualizations ? fenceVisualizeCitations(sourceText) : sourceText),
+    [renderVisualizations, sourceText],
+  );
   const {
     componentState,
     handleCopy,
@@ -3485,7 +3604,7 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, ...props });
+  } = useChatMarkdownState({ text, renderVisualizations, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&

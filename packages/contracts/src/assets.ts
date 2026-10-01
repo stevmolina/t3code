@@ -57,6 +57,12 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
+  // An HTML fragment an agent cited for inline display. The server wraps it in
+  // a sandboxed page with the visualization runtime; the client never sees the
+  // fragment source.
+  Schema.TaggedStruct("visualization", {
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
