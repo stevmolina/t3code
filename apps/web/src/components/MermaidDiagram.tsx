@@ -214,8 +214,7 @@ export function MermaidDiagramDialog({
           <Button
             type="button"
             size="icon-xs"
-            variant="ghost"
-            className="text-white/90 hover:bg-white/10 hover:text-white"
+            variant="media-close"
             onClick={handleCopy}
             aria-label={copied ? "Copied" : "Copy diagram source"}
           >
@@ -224,8 +223,7 @@ export function MermaidDiagramDialog({
           <Button
             type="button"
             size="icon-xs"
-            variant="ghost"
-            className="text-white/90 hover:bg-white/10 hover:text-white"
+            variant="media-close"
             onClick={onClose}
             aria-label="Close diagram preview"
             ref={closeButtonRef}
