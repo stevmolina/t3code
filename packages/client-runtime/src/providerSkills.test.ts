@@ -265,6 +265,9 @@ describe("workspace provider snapshots", () => {
     };
     const withNative = { ...provider, skills: [nativeVisualize], workspaceSnapshots: [] };
     expect(resolveProviderSkillsForCwd(withNative, null)).toEqual([nativeVisualize]);
+    const pluginVisualize = { ...nativeVisualize, name: "visualize:visualize" };
+    const withPlugin = { ...provider, skills: [pluginVisualize], workspaceSnapshots: [] };
+    expect(resolveProviderSkillsForCwd(withPlugin, null)).toEqual([pluginVisualize]);
     expect(resolveProviderSkillsForCwd(provider, null)).toBe(
       resolveProviderSkillsForCwd(provider, null),
     );

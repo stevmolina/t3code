@@ -21,6 +21,15 @@ describe("parseVisualizeCitation", () => {
     ).toEqual({ path: "C:\\viz\\app.html", mode: "wide", title: "Shell" });
   });
 
+  it("accepts the bare form some models write without the markers", () => {
+    expect(parseVisualizeCitation('visualize{"path":"/tmp/v/chart.html"}')).toEqual({
+      path: "/tmp/v/chart.html",
+      mode: "normal",
+    });
+    const line = 'visualize{"path":"/tmp/v/chart.html","mode":"wide"}';
+    expect(fenceVisualizeCitations(`Look:\n${line}`)).toContain(`\n${line}\n`);
+  });
+
   it("rejects anything but a well-formed absolute HTML reference", () => {
     for (const line of [
       reference('{"path":"chart.html"}'),
@@ -30,6 +39,8 @@ describe("parseVisualizeCitation", () => {
       reference('["/tmp/chart.html"]'),
       `\uE200other\uE202{"path":"/tmp/chart.html"}\uE201`,
       `See ${reference('{"path":"/tmp/chart.html"}')}`,
+      'visualize {"path":"/tmp/chart.html"}',
+      'Use visualize{"path":"/tmp/chart.html"}',
     ]) {
       expect(parseVisualizeCitation(line)).toBeNull();
     }

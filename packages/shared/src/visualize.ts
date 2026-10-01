@@ -5,7 +5,8 @@
  *   U+E200 "visualize" U+E202 {"path":"/abs/file.html","mode":"wide","title":"…"} U+E201
  *
  * Codex's Visualize plugin emits the same reference, so the parser accepts its
- * output unchanged.
+ * output unchanged. Some models drop the private-use markers, so the bare
+ * `visualize{…}` line is accepted too; it only counts on a line of its own.
  */
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
@@ -27,9 +28,14 @@ export const BUILTIN_VISUALIZE_SKILL = {
   enabled: true,
 } satisfies ServerProviderSkill;
 
-/** Whether a provider already lists its own Visualize skill. */
+/**
+ * Whether a provider already lists its own Visualize skill. Plugin skills are
+ * namespaced, so Codex's bundled plugin arrives as `visualize:visualize`.
+ */
 export function hasProviderVisualizeSkill(skills: ReadonlyArray<ServerProviderSkill>): boolean {
-  return skills.some((skill) => skill.name.trim().toLowerCase() === VISUALIZE_SKILL_NAME);
+  return skills.some(
+    (skill) => skill.name.trim().toLowerCase().split(":").at(-1) === VISUALIZE_SKILL_NAME,
+  );
 }
 
 /** Adds the built-in skill unless the provider ships its own. */
@@ -42,7 +48,11 @@ export function withBuiltinVisualizeSkill(
 const CITATION_START = "\uE200";
 const CITATION_SEPARATOR = "\uE202";
 const CITATION_END = "\uE201";
-const CITATION_PREFIX = `${CITATION_START}${VISUALIZE_SKILL_NAME}${CITATION_SEPARATOR}`;
+const CITATION_PATTERN = new RegExp(
+  `^${CITATION_START}?${VISUALIZE_SKILL_NAME}${CITATION_SEPARATOR}?(\\{.*\\})${CITATION_END}?$`,
+  "su",
+);
+const CITATION_HINT = new RegExp(`${VISUALIZE_SKILL_NAME}${CITATION_SEPARATOR}?\\{`, "u");
 
 /** Fence language that carries a citation from the Markdown parser to the renderer. */
 export const VISUALIZE_CITATION_FENCE_LANGUAGE = "t3-visualize";
@@ -63,16 +73,11 @@ function isAbsoluteHostPath(path: string): boolean {
 /** Parses one trimmed line. Anything but a well-formed reference returns null. */
 export function parseVisualizeCitation(line: string): VisualizeCitation | null {
   const trimmed = line.trim();
-  if (
-    trimmed.length > MAX_CITATION_LENGTH ||
-    !trimmed.startsWith(CITATION_PREFIX) ||
-    !trimmed.endsWith(CITATION_END)
-  ) {
-    return null;
-  }
+  const json = trimmed.length > MAX_CITATION_LENGTH ? null : CITATION_PATTERN.exec(trimmed)?.[1];
+  if (json === undefined || json === null) return null;
   let payload: unknown;
   try {
-    payload = JSON.parse(trimmed.slice(CITATION_PREFIX.length, -CITATION_END.length));
+    payload = JSON.parse(json);
   } catch {
     return null;
   }
@@ -97,7 +102,7 @@ const FENCE_PATTERN = /^( {0,3})(`{3,}|~{3,})/;
  * existing fences stay as written.
  */
 export function fenceVisualizeCitations(markdown: string): string {
-  if (!markdown.includes(CITATION_PREFIX)) return markdown;
+  if (!CITATION_HINT.test(markdown)) return markdown;
   const lines = markdown.split("\n");
   let openFence: string | null = null;
   let changed = false;
