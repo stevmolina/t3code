@@ -14,7 +14,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
-import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
+import { isImportedAgentSessionMessageId, makeMessageUnsentFilter } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 
 export type ThreadDetailReducerResult =
@@ -676,6 +676,44 @@ export function applyThreadDetailEvent(
       };
     }
 
+    case "thread.message-unsent": {
+      const isRemoved = makeMessageUnsentFilter(event.payload);
+      const removedTurnIds = new Set<string>(event.payload.removedTurnIds);
+      const checkpoints = pipe(
+        thread.checkpoints,
+        Arr.filter((entry) => !removedTurnIds.has(entry.turnId)),
+      );
+      // Same fallback as a revert: the newest surviving checkpoint, if any.
+      const latestCheckpoint = checkpoints.at(-1) ?? null;
+      const latestTurn =
+        thread.latestTurn === null || !removedTurnIds.has(thread.latestTurn.turnId)
+          ? thread.latestTurn
+          : latestCheckpoint === null
+            ? null
+            : {
+                turnId: latestCheckpoint.turnId,
+                state: checkpointStatusToTurnState(
+                  latestCheckpoint.status as "ready" | "missing" | "error",
+                ),
+                requestedAt: latestCheckpoint.completedAt,
+                startedAt: latestCheckpoint.completedAt,
+                completedAt: latestCheckpoint.completedAt,
+                assistantMessageId: latestCheckpoint.assistantMessageId ?? null,
+              };
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          checkpoints,
+          messages: Arr.filter(thread.messages, (message) => !isRemoved(message)),
+          proposedPlans: Arr.filter(thread.proposedPlans, (plan) => !isRemoved(plan)),
+          activities: Arr.filter(thread.activities, (activity) => !isRemoved(activity)),
+          latestTurn,
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
       const activity = event.payload.activity;
@@ -739,6 +777,7 @@ export function applyThreadDetailEvent(
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":
     case "thread.checkpoint-revert-requested":
+    case "thread.message-unsend-requested":
       return { kind: "unchanged" };
   }
 

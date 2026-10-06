@@ -14,6 +14,7 @@ import {
 } from "./timelineMinimapItems";
 import {
   COMPOSER_CONTEXT_KINDS,
+  isImportedAgentSessionMessageId,
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
@@ -123,6 +124,7 @@ import {
   Minimize2Icon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  PencilIcon,
   SearchIcon,
   SmartphoneIcon,
   SquarePenIcon,
@@ -279,6 +281,8 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  /** Undefined when the provider cannot remove turns from its conversation. */
+  onEditUserMessage: ((messageId: MessageId) => void) | undefined;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   onVisualizationFollowUp: ((prompt: string) => void) | undefined;
@@ -429,6 +433,7 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  onEditUserMessage?: (messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onRunShellCommand?: (command: string) => void;
   /** Puts a follow-up prompt from an inline visualization into the composer. */
@@ -501,6 +506,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   supportsConversationRollback,
   onRevertToTurnCount,
+  onEditUserMessage,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onRunShellCommand,
   onVisualizationFollowUp,
@@ -1157,6 +1163,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
+      onEditUserMessage: supportsConversationRollback ? onEditUserMessage : undefined,
       onUseArtifactTemplate,
       onRunShellCommand,
       onVisualizationFollowUp,
@@ -1194,6 +1201,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
+      supportsConversationRollback,
+      onEditUserMessage,
       onUseArtifactTemplate,
       onRunShellCommand,
       onVisualizationFollowUp,
@@ -2240,6 +2249,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            {ctx.onEditUserMessage && <EditUserMessageButton messageId={row.message.id} />}
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
@@ -2318,6 +2328,35 @@ function RevertUserMessageButton({
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Edit from here</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function EditUserMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+  const onEditUserMessage = ctx.onEditUserMessage;
+  // Imported history has no provider turns to drop.
+  if (!onEditUserMessage || isImportedAgentSessionMessageId(messageId)) return null;
+
+  // Enabled while the agent works: editing stops the reply first.
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={activity.isRevertingCheckpoint}
+            onClick={() => onEditUserMessage(messageId)}
+            aria-label="Edit message"
+          />
+        }
+      >
+        <PencilIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Edit message</TooltipPopup>
     </Tooltip>
   );
 }

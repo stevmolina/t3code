@@ -1197,6 +1197,98 @@ export async function waitForRevertedMessage(
   });
 }
 
+/**
+ * Unsends a user message and resolves once it is gone from the thread. When a
+ * reply is running, `stopReply` interrupts it first and the unsend waits for
+ * the session to settle, since the server only edits idle threads. Rejects
+ * with the server's reason when the edit fails.
+ */
+export async function unsendMessageAndWait(input: {
+  threadRef: ScopedThreadRef;
+  messageId: MessageId;
+  stopReply: (() => Promise<void>) | null;
+  unsend: () => Promise<void>;
+  timeoutMs?: number;
+}): Promise<void> {
+  const threadAtom = environmentThreadDetails.detailAtom(input.threadRef);
+  const initial = appAtomRegistry.get(threadAtom);
+  if (!initial?.messages.some((message) => message.id === input.messageId)) {
+    throw new Error("The message to edit is no longer available.");
+  }
+  const previousFailures = new Set(
+    initial.activities
+      .filter((activity) => activity.kind === "message.unsend.failed")
+      .map((activity) => activity.id),
+  );
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let stage: "stopping" | "unsending" = input.stopReply ? "stopping" : "unsending";
+    let stopRequested = false;
+    let accepted = false;
+    let unsubscribe = () => {};
+    let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) globalThis.clearTimeout(timeout);
+      unsubscribe();
+      if (error !== undefined) reject(error);
+      else resolve();
+    };
+    const startUnsend = () => {
+      stage = "unsending";
+      Promise.resolve()
+        .then(input.unsend)
+        .then(() => {
+          accepted = true;
+          inspect();
+        }, finish);
+    };
+    const inspect = () => {
+      const thread = appAtomRegistry.get(threadAtom);
+      if (!thread || settled) return;
+      if (stage === "stopping") {
+        const status = thread.session?.status;
+        if (stopRequested && status !== "starting" && status !== "running") startUnsend();
+        return;
+      }
+      const failure = thread.activities.findLast(
+        (activity) =>
+          activity.kind === "message.unsend.failed" && !previousFailures.has(activity.id),
+      );
+      if (failure) {
+        const payload = failure.payload;
+        finish(
+          new Error(
+            typeof payload === "object" &&
+              payload !== null &&
+              "detail" in payload &&
+              typeof payload.detail === "string"
+              ? payload.detail
+              : failure.summary,
+          ),
+        );
+      } else if (accepted && !thread.messages.some((message) => message.id === input.messageId)) {
+        finish();
+      }
+    };
+    unsubscribe = appAtomRegistry.subscribe(threadAtom, inspect);
+    timeout = globalThis.setTimeout(() => {
+      finish(new Error("Timed out waiting for the message to be removed."));
+    }, input.timeoutMs ?? 120_000);
+    if (input.stopReply) {
+      Promise.resolve()
+        .then(input.stopReply)
+        .then(() => {
+          stopRequested = true;
+          inspect();
+        }, finish);
+    } else {
+      startUnsend();
+    }
+  });
+}
+
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;

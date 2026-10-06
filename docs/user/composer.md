@@ -104,7 +104,14 @@ into a normal draft.
 
 ## Edit an earlier prompt
 
-On web and desktop, choose **Edit from here** beneath a sent message to rewind
+On web and desktop, choose **Edit message** beneath any sent message to take it
+back. If the agent is still replying, the reply stops first. The message and
+everything after it leave the thread and the provider's history, and the message
+returns to the composer with its attachments. Workspace files stay as they are.
+A message sent while the agent was replying belongs to that reply, so edit the
+message that started the reply instead.
+
+When a reply recorded file changes, you can also choose **Edit from here** to rewind
 the conversation to before that message. Choose **Revert and keep changes** to
 leave workspace files as they are, or **Revert files too** to restore them as well.
 File restore is only offered for threads running in a worktree, and it is
@@ -115,7 +122,7 @@ resending. Any unsent draft stays above the restored prompt.
 
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
-memory. The action is available only when the provider supports rewind.
+memory. Both actions are available only when the provider supports rewind.
 
 ## Prompt stash
 

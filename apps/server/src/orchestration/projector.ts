@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
+  makeMessageUnsentFilter,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -52,6 +53,7 @@ import {
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
+  ThreadMessageUnsentPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
@@ -1055,6 +1057,47 @@ export function projectEvent(
               messages,
               proposedPlans,
               activities,
+              latestTurn,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.message-unsent":
+      return decodeForEvent(ThreadMessageUnsentPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const isRemoved = makeMessageUnsentFilter(payload);
+          const removedTurnIds = new Set<string>(payload.removedTurnIds);
+          const checkpoints = thread.checkpoints.filter(
+            (entry) => !removedTurnIds.has(entry.turnId),
+          );
+          // Same fallback as a revert: the newest surviving checkpoint, if any.
+          const latestCheckpoint = checkpoints.at(-1) ?? null;
+          const latestTurn =
+            thread.latestTurn === null || !removedTurnIds.has(thread.latestTurn.turnId)
+              ? thread.latestTurn
+              : latestCheckpoint === null
+                ? null
+                : {
+                    turnId: latestCheckpoint.turnId,
+                    state: checkpointStatusToLatestTurnState(latestCheckpoint.status),
+                    requestedAt: latestCheckpoint.completedAt,
+                    startedAt: latestCheckpoint.completedAt,
+                    completedAt: latestCheckpoint.completedAt,
+                    assistantMessageId: latestCheckpoint.assistantMessageId,
+                  };
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              checkpoints,
+              messages: thread.messages.filter((message) => !isRemoved(message)),
+              proposedPlans: thread.proposedPlans.filter((plan) => !isRemoved(plan)),
+              activities: thread.activities.filter((activity) => !isRemoved(activity)),
               latestTurn,
               updatedAt: event.occurredAt,
             }),

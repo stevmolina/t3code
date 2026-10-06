@@ -86,6 +86,7 @@ import {
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
+  unsendMessageAndWait,
   waitForRevertedMessage,
   prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
@@ -2256,6 +2257,82 @@ describe("rewind draft recovery", () => {
     expect(files[0]?.name).toBe("notes.txt");
     expect(await files[0]?.text()).toBe("original bytes");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://server.test/asset/signed");
+  });
+});
+
+describe("unsendMessageAndWait", () => {
+  const message = {
+    id: MessageId.make("edited-message"),
+    role: "user" as const,
+    text: "edit this question",
+    turnId: null,
+    createdAt: now,
+    updatedAt: now,
+    streaming: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("stops the running reply and unsends only after the session settles", async () => {
+    const running = makeThread({
+      messages: [message],
+      session: { ...readySession, status: "running", activeTurnId: TurnId.make("turn-1") },
+    });
+    const atom = Atom.make<Thread | null>(running);
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    const calls: string[] = [];
+    const result = unsendMessageAndWait({
+      threadRef: { environmentId, threadId },
+      messageId: message.id,
+      stopReply: async () => {
+        calls.push("stop");
+      },
+      unsend: async () => {
+        calls.push("unsend");
+      },
+    });
+    const flush = () => new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+    await flush();
+    expect(calls).toEqual(["stop"]);
+
+    appAtomRegistry.set(atom, makeThread({ messages: [message], session: readySession }));
+    await flush();
+    expect(calls).toEqual(["stop", "unsend"]);
+
+    appAtomRegistry.set(atom, makeThread({ messages: [], session: readySession }));
+    await result;
+  });
+
+  it("rejects with the server's reason", async () => {
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    const result = unsendMessageAndWait({
+      threadRef: { environmentId, threadId },
+      messageId: message.id,
+      stopReply: null,
+      unsend: async () => {
+        appAtomRegistry.set(
+          atom,
+          makeThread({
+            messages: [message],
+            activities: [
+              {
+                id: EventId.make("unsend-failed"),
+                kind: "message.unsend.failed",
+                tone: "error",
+                summary: "Message edit failed",
+                payload: { detail: "Sent while the agent was replying" },
+                turnId: null,
+                createdAt: now,
+              },
+            ],
+          }),
+        );
+      },
+    });
+    await expect(result).rejects.toThrow("Sent while the agent was replying");
   });
 });
 

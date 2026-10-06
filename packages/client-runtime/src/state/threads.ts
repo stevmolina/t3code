@@ -477,7 +477,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }
       return;
     }
-    if (item.event.type === "thread.reverted") {
+    if (item.event.type === "thread.reverted" || item.event.type === "thread.message-unsent") {
       // A revert rewrites loaded history (whole turns disappear), so an
       // older-page fetch in flight may straddle the removed range; the epoch
       // bump discards it. The stored page cursor stays valid: cursors are an
@@ -544,7 +544,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             (item) =>
               item.kind === "snapshot" ||
               (item.kind === "event" &&
-                (item.event.type === "thread.reverted" || item.event.type === "thread.deleted")),
+                (item.event.type === "thread.reverted" ||
+                  item.event.type === "thread.message-unsent" ||
+                  item.event.type === "thread.deleted")),
           )
         ) {
           for (const item of items) {

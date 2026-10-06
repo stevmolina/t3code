@@ -398,6 +398,7 @@ describe("CheckpointReactor", () => {
       ),
       Layer.provideMerge(WorkspacePaths.layer),
       Layer.provideMerge(VcsProcess.layer),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfigLayer),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -2138,6 +2139,128 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.make("thread-1"),
       numTurns: 1,
     });
+  });
+
+  describe("message unsend", () => {
+    const threadId = ThreadId.make("thread-1");
+    const at = (seconds: number) => `2026-01-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+    type Harness = Awaited<ReturnType<typeof createHarness>>;
+    const createNonGitHarness = () =>
+      Effect.promise(() =>
+        createHarness({
+          initializeGit: false,
+          seedFilesystemCheckpoints: false,
+          providerName: ProviderDriverKind.make("claudeAgent"),
+        }),
+      );
+    const setSession = (
+      harness: Harness,
+      status: "ready" | "running",
+      activeTurnId: TurnId | null,
+      createdAt: string,
+    ) =>
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`cmd-session-${status}-${createdAt}`),
+        threadId,
+        session: {
+          threadId,
+          status,
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+    // One full exchange: the user prompt, the running turn, and its reply.
+    const runTurn = (harness: Harness, index: number) =>
+      Effect.gen(function* () {
+        const start = index * 10;
+        const turnId = asTurnId(`turn-${index}`);
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-${index}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`user-${index}`),
+            role: "user",
+            text: `prompt ${index}`,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: at(start),
+        });
+        yield* setSession(harness, "running", turnId, at(start + 1));
+        yield* harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-assistant-delta-${index}`),
+          threadId,
+          messageId: MessageId.make(`assistant-${index}`),
+          delta: `reply ${index}`,
+          turnId,
+          createdAt: at(start + 2),
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-assistant-complete-${index}`),
+          threadId,
+          messageId: MessageId.make(`assistant-${index}`),
+          turnId,
+          createdAt: at(start + 3),
+        });
+        yield* setSession(harness, "ready", null, at(start + 4));
+      });
+
+    effectIt.effect("removes the message and later turns without file checkpoints", () =>
+      Effect.gen(function* () {
+        const harness = yield* createNonGitHarness();
+        yield* runTurn(harness, 1);
+        yield* runTurn(harness, 2);
+        yield* runTurn(harness, 3);
+
+        yield* harness.engine.dispatch({
+          type: "thread.message.unsend",
+          commandId: CommandId.make("cmd-unsend"),
+          threadId,
+          messageId: MessageId.make("user-2"),
+          createdAt: at(40),
+        });
+        yield* Effect.promise(() =>
+          waitForEvent(harness.engine, (event) => event.type === "thread.message-unsent"),
+        );
+
+        expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+          threadId,
+          numTurns: 2,
+        });
+        const readModel = yield* Effect.promise(harness.readModel);
+        const thread = readModel.threads.find((entry) => entry.id === threadId);
+        expect(thread?.messages.map((message) => message.id)).toEqual(["user-1", "assistant-1"]);
+      }),
+    );
+
+    effectIt.effect("refuses to unsend while a reply is running", () =>
+      Effect.gen(function* () {
+        const harness = yield* createNonGitHarness();
+        yield* runTurn(harness, 1);
+        yield* setSession(harness, "running", asTurnId("turn-1"), at(20));
+
+        const result = yield* harness.engine
+          .dispatch({
+            type: "thread.message.unsend",
+            commandId: CommandId.make("cmd-unsend-running"),
+            threadId,
+            messageId: MessageId.make("user-1"),
+            createdAt: at(21),
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+      }),
+    );
   });
 
   it("processes consecutive revert requests with deterministic rollback sequencing", async () => {

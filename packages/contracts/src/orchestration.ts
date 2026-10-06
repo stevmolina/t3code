@@ -1411,6 +1411,16 @@ const ThreadConversationRevertCommand = Schema.Struct({
   type: Schema.Literal("thread.conversation.revert"),
 });
 
+// Removes a user message and everything after it, from the thread and from the
+// provider's conversation. Works without file checkpoints. The thread must be idle.
+const ThreadMessageUnsendCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.unsend"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadSessionStopCommand = Schema.Struct({
   type: Schema.Literal("thread.session.stop"),
   commandId: CommandId,
@@ -1453,6 +1463,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputDismissCommand,
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
+  ThreadMessageUnsendCommand,
   ThreadSessionStopCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
@@ -1487,6 +1498,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputDismissCommand,
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
+  ThreadMessageUnsendCommand,
   ThreadSessionStopCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -1607,6 +1619,16 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageUnsendCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.unsend.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  messageCreatedAt: IsoDateTime,
+  removedTurnIds: Schema.Array(TurnId),
+  createdAt: IsoDateTime,
+});
+
 const ThreadTitleGenerateCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.generate.complete"),
   commandId: CommandId,
@@ -1673,6 +1695,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadMessageUnsendCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
   ThreadTitleGenerateCompleteCommand,
   ThreadTitleRefineCommand,
@@ -1716,6 +1739,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
   "thread.reverted",
+  "thread.message-unsend-requested",
+  "thread.message-unsent",
   "thread.session-stop-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
@@ -1969,6 +1994,42 @@ export const ThreadRevertedPayload = Schema.Struct({
   turnCount: NonNegativeInt,
 });
 
+export const ThreadMessageUnsendRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+// Everything from the message onward is gone: the message itself, entries of
+// the removed turns, and anything created after the message.
+export const ThreadMessageUnsentPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  messageCreatedAt: IsoDateTime,
+  removedTurnIds: Schema.Array(TurnId),
+});
+
+export type ThreadMessageUnsentPayload = typeof ThreadMessageUnsentPayload.Type;
+
+/**
+ * Builds the test for which thread entries a `thread.message-unsent` removes.
+ * Every projection of messages, activities, plans, and turns uses it so they agree.
+ */
+export function makeMessageUnsentFilter(
+  payload: ThreadMessageUnsentPayload,
+): (entry: {
+  readonly id?: string;
+  readonly turnId: string | null;
+  readonly createdAt: string;
+}) => boolean {
+  const removedTurnIds = new Set<string>(payload.removedTurnIds);
+  const cutoff = Date.parse(payload.messageCreatedAt);
+  return (entry) =>
+    entry.id === payload.messageId ||
+    (entry.turnId !== null && removedTurnIds.has(entry.turnId)) ||
+    Date.parse(entry.createdAt) > cutoff;
+}
+
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
@@ -2181,6 +2242,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.reverted"),
     payload: ThreadRevertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-unsend-requested"),
+    payload: ThreadMessageUnsendRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-unsent"),
+    payload: ThreadMessageUnsentPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

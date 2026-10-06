@@ -57,6 +57,7 @@ export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismis
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert"> & {
   readonly restoreFiles?: boolean;
 };
+export type UnsendThreadMessageInput = CommandInput<"thread.message.unsend">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
@@ -376,6 +377,18 @@ export const revertThreadCheckpoint: (input: RevertThreadCheckpointInput) => Com
       createdAt: metadata.createdAt,
     });
   });
+
+export const unsendThreadMessage: (input: UnsendThreadMessageInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unsendThreadMessage",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.message.unsend",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
 
 export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.stopThreadSession",

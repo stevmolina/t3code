@@ -2,6 +2,7 @@ import {
   CommandId,
   type CheckpointRef,
   EventId,
+  isImportedAgentSessionMessageId,
   MessageId,
   type ProjectId,
   ThreadId,
@@ -37,6 +38,10 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
+import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
@@ -93,6 +98,8 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
   const queuedEntryRefreshes = new Set<string>();
   const entryRefreshWorker = yield* makeDrainableWorker((cwd: string) =>
     Effect.sync(() => queuedEntryRefreshes.delete(cwd)).pipe(
@@ -137,6 +144,38 @@ const make = Effect.gen(function* () {
             summary: "Checkpoint revert failed",
             payload: {
               turnCount: input.turnCount,
+              detail: input.detail,
+            },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendUnsendFailureActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("message-unsend-failure"),
+      activityId: serverEventId,
+    }).pipe(
+      Effect.flatMap(({ commandId, activityId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: activityId,
+            tone: "error",
+            kind: "message.unsend.failed",
+            summary: "Message edit failed",
+            payload: {
+              messageId: input.messageId,
               detail: input.detail,
             },
             turnId: null,
@@ -909,10 +948,112 @@ const make = Effect.gen(function* () {
       );
   });
 
+  // Drops the message's turn and every later turn from the provider, then from
+  // the thread. Unlike a revert this needs no checkpoints: turns are found by
+  // time, so threads outside git and turns without file changes work too.
+  const handleMessageUnsendRequested = Effect.fn("handleMessageUnsendRequested")(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.message-unsend-requested" }>,
+  ) {
+    const { threadId, messageId } = event.payload;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const fail = (detail: string) =>
+      appendUnsendFailureActivity({ threadId, messageId, detail, createdAt: now }).pipe(
+        Effect.ignore,
+      );
+
+    const message = Option.getOrUndefined(
+      yield* projectionThreadMessageRepository.getByMessageId({ messageId }),
+    );
+    if (!message || message.threadId !== threadId || message.role !== "user") {
+      return yield* fail("The message is no longer in this thread.");
+    }
+    if (isImportedAgentSessionMessageId(messageId)) {
+      return yield* fail("Imported history cannot be edited. Start a new thread instead.");
+    }
+
+    const turns = yield* projectionTurnRepository.listByThreadId({ threadId });
+    const cutoff = Date.parse(message.createdAt);
+    const ownTurn = turns.find((turn) => turn.pendingMessageId === messageId);
+    // A message sent mid-reply joins the running turn, and providers only drop
+    // whole turns, so it cannot be removed without the prompt that started it.
+    if (
+      !ownTurn &&
+      turns.some(
+        (turn) =>
+          turn.completedAt !== null &&
+          Date.parse(turn.requestedAt) < cutoff &&
+          Date.parse(turn.completedAt) > cutoff,
+      )
+    ) {
+      return yield* fail(
+        "This message was sent while the agent was replying. Edit the message that started that reply instead.",
+      );
+    }
+    const removedTurns = turns.filter(
+      (turn) =>
+        turn.turnId !== null && (turn === ownTurn || Date.parse(turn.requestedAt) >= cutoff),
+    );
+
+    if (removedTurns.length > 0) {
+      yield* providerService.rollbackConversation({ threadId, numTurns: removedTurns.length });
+    }
+
+    const staleCheckpointRefs = removedTurns.flatMap((turn) =>
+      turn.checkpointRef === null ? [] : [turn.checkpointRef],
+    );
+    if (staleCheckpointRefs.length > 0) {
+      const thread = yield* resolveThreadDetail(threadId);
+      const checkpointCwd = thread
+        ? yield* resolveCheckpointCwd({
+            threadId,
+            thread,
+            projects: yield* resolveThreadProjects(thread.projectId),
+            preferSessionRuntime: true,
+          }).pipe(Effect.catch(() => Effect.undefined))
+        : undefined;
+      if (checkpointCwd) {
+        yield* checkpointStore
+          .deleteCheckpointRefs({ cwd: checkpointCwd, checkpointRefs: staleCheckpointRefs })
+          .pipe(Effect.ignore);
+      }
+    }
+
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.message.unsend.complete",
+        commandId: yield* serverCommandId("message-unsend-complete"),
+        threadId,
+        messageId,
+        messageCreatedAt: message.createdAt,
+        removedTurnIds: removedTurns.flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+        createdAt: now,
+      })
+      .pipe(
+        Effect.catch((error) => fail(error.message)),
+        Effect.asVoid,
+      );
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
+      return;
+    }
+
+    if (event.type === "thread.message-unsend-requested") {
+      yield* handleMessageUnsendRequested(event).pipe(
+        Effect.catch((error) =>
+          Effect.flatMap(nowIso, (createdAt) =>
+            appendUnsendFailureActivity({
+              threadId: event.payload.threadId,
+              messageId: event.payload.messageId,
+              detail: error.message,
+              createdAt,
+            }),
+          ),
+        ),
+      );
       return;
     }
 
@@ -1028,7 +1169,8 @@ const make = Effect.gen(function* () {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested"
+          event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.message-unsend-requested"
         ) {
           return Effect.void;
         }
@@ -1060,4 +1202,7 @@ const make = Effect.gen(function* () {
   } satisfies CheckpointReactorShape;
 });
 
-export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make);
+export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make).pipe(
+  Layer.provide(ProjectionThreadMessageRepositoryLive),
+  Layer.provide(ProjectionTurnRepositoryLive),
+);

@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
+  makeMessageUnsentFilter,
   UserInputAttachmentAnswerPayload,
   type ChatAttachment,
   type OrchestrationEvent,
@@ -1125,6 +1126,44 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.message-unsent": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const removedTurnIds = new Set<string>(event.payload.removedTurnIds);
+          let latestTurnId = existingRow.value.latestTurnId;
+          if (latestTurnId !== null && removedTurnIds.has(latestTurnId)) {
+            // Same fallback as a revert: the newest surviving checkpointed turn.
+            latestTurnId = null;
+            let latestCheckpointTurnCount = -1;
+            const turns = yield* projectionTurnRepository.listByThreadId({
+              threadId: event.payload.threadId,
+            });
+            for (const turn of turns) {
+              if (
+                turn.turnId === null ||
+                removedTurnIds.has(turn.turnId) ||
+                turn.checkpointTurnCount === null ||
+                turn.checkpointTurnCount <= latestCheckpointTurnCount
+              ) {
+                continue;
+              }
+              latestCheckpointTurnCount = turn.checkpointTurnCount;
+              latestTurnId = turn.turnId;
+            }
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            latestTurnId,
+            updatedAt: event.occurredAt,
+          });
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
         default:
           return;
       }
@@ -1230,6 +1269,31 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.message-unsent": {
+          const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const isRemoved = makeMessageUnsentFilter(event.payload);
+          const keptRows = existingRows.filter(
+            (row) =>
+              !isRemoved({ id: row.messageId, turnId: row.turnId, createdAt: row.createdAt }),
+          );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+          yield* projectionThreadMessageRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadMessageRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          attachmentSideEffects.prunedThreadRelativePaths.set(
+            event.payload.threadId,
+            collectThreadAttachmentRelativePaths(event.payload.threadId, keptRows),
+          );
+          return;
+        }
+
         default:
           return;
       }
@@ -1287,6 +1351,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.message-unsent": {
+          const existingRows = yield* projectionThreadProposedPlanRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const isRemoved = makeMessageUnsentFilter(event.payload);
+          const keptRows = existingRows.filter((row) => !isRemoved(row));
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+          yield* projectionThreadProposedPlanRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadProposedPlanRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          return;
+        }
+
         default:
           return;
       }
@@ -1333,6 +1415,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             existingTurns,
             event.payload.turnCount,
           );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+          yield* projectionThreadActivityRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          attachmentSideEffects.prunedThreadRelativePaths.set(event.payload.threadId, new Set());
+          return;
+        }
+
+        case "thread.message-unsent": {
+          const existingRows = yield* projectionThreadActivityRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const isRemoved = makeMessageUnsentFilter(event.payload);
+          const keptRows = existingRows.filter((row) => !isRemoved(row));
           if (keptRows.length === existingRows.length) {
             return;
           }
@@ -1774,6 +1875,37 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.message-unsent": {
+          const existingTurns = yield* projectionTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const isRemoved = makeMessageUnsentFilter(event.payload);
+          const keptTurns = existingTurns.filter(
+            (turn) =>
+              turn.turnId !== null &&
+              !isRemoved({
+                ...(turn.pendingMessageId !== null ? { id: turn.pendingMessageId } : {}),
+                turnId: turn.turnId,
+                createdAt: turn.requestedAt,
+              }),
+          );
+          yield* projectionTurnRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(
+            keptTurns,
+            (turn) =>
+              turn.turnId === null
+                ? Effect.void
+                : projectionTurnRepository.upsertByTurnId({
+                    ...turn,
+                    turnId: turn.turnId,
+                  }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+        }
+
         default:
           return;
       }
@@ -2158,18 +2290,28 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         (event) =>
           Effect.sync(() => {
             lastEvent = event;
-            if (event.type === "thread.reverted" || event.type === "thread.deleted") {
+            if (
+              event.type === "thread.reverted" ||
+              event.type === "thread.message-unsent" ||
+              event.type === "thread.deleted"
+            ) {
               pendingCleanup.set(`${event.type}:${event.payload.threadId}`, event);
             }
           }),
       );
       for (const event of pendingCleanup.values()) {
-        if (event.type !== "thread.reverted" && event.type !== "thread.deleted") continue;
+        if (
+          event.type !== "thread.reverted" &&
+          event.type !== "thread.message-unsent" &&
+          event.type !== "thread.deleted"
+        ) {
+          continue;
+        }
         const threadId = event.payload.threadId;
         const cleaned = yield* applyAttachmentSideEffects(event, {
           deletedThreadIds: new Set(event.type === "thread.deleted" ? [threadId] : []),
           prunedThreadRelativePaths: new Map(
-            event.type === "thread.reverted" ? [[threadId, new Set<string>()]] : [],
+            event.type === "thread.deleted" ? [] : [[threadId, new Set<string>()]],
           ),
         });
         // Leave the cleanup cursor behind this event so the next bootstrap retries it.

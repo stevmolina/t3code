@@ -1515,6 +1515,78 @@ describe("applyThreadDetailEvent", () => {
     );
   });
 
+  describe("thread.message-unsent", () => {
+    it("drops the message, its turns, and everything after it", () => {
+      const message = (
+        id: string,
+        role: "user" | "assistant",
+        turnId: string | null,
+        at: string,
+      ) => ({
+        id: MessageId.make(id),
+        role,
+        text: id,
+        turnId: turnId === null ? null : TurnId.make(turnId),
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+      });
+      const activity = (id: string, turnId: string | null, at: string) => ({
+        id: EventId.make(id),
+        tone: "info" as const,
+        kind: "tool.completed",
+        summary: id,
+        payload: {},
+        turnId: turnId === null ? null : TurnId.make(turnId),
+        createdAt: at,
+      });
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          message("user-1", "user", null, "2026-04-01T10:00:00.000Z"),
+          message("assistant-1", "assistant", "turn-1", "2026-04-01T10:00:05.000Z"),
+          message("user-2", "user", null, "2026-04-01T10:01:00.000Z"),
+          message("assistant-2", "assistant", "turn-2", "2026-04-01T10:01:05.000Z"),
+        ],
+        activities: [
+          activity("activity-1", "turn-1", "2026-04-01T10:00:03.000Z"),
+          activity("activity-2", "turn-2", "2026-04-01T10:01:03.000Z"),
+          activity("notice-after", null, "2026-04-01T10:02:00.000Z"),
+        ],
+        latestTurn: {
+          turnId: TurnId.make("turn-2"),
+          state: "completed",
+          requestedAt: "2026-04-01T10:01:00.000Z",
+          startedAt: "2026-04-01T10:01:01.000Z",
+          completedAt: "2026-04-01T10:01:10.000Z",
+          assistantMessageId: MessageId.make("assistant-2"),
+        },
+      };
+
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T10:03:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-unsent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("user-2"),
+          messageCreatedAt: "2026-04-01T10:01:00.000Z",
+          removedTurnIds: [TurnId.make("turn-2")],
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((entry) => entry.id)).toEqual(["user-1", "assistant-1"]);
+        expect(result.thread.activities.map((entry) => entry.id)).toEqual(["activity-1"]);
+        expect(result.thread.latestTurn).toBeNull();
+      }
+    });
+  });
+
   describe("thread.reverted", () => {
     it("keeps imported history and removes the first live prompt at checkpoint zero", () => {
       const threadWithImportedHistory: OrchestrationThread = {

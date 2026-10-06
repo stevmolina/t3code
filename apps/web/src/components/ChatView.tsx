@@ -450,6 +450,7 @@ import {
   readFileAsDataUrl,
   resolveFileAttachmentUrl,
   prepareRevertedMessageAttachments,
+  unsendMessageAndWait,
   waitForRevertedMessage,
   reconcileMountedTerminalThreadIds,
   recallCheckoutIsRepo,
@@ -1458,6 +1459,7 @@ const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
 const noopHeldTurnDiff = (_turnId: TurnId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
+const noopHeldEdit = (_messageId: MessageId) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
 
 /**
@@ -1542,6 +1544,9 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
+    reportFailure: false,
+  });
+  const unsendThreadMessage = useAtomCommand(threadEnvironment.unsendMessage, {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -7035,6 +7040,78 @@ export default function ChatView(props: ChatViewProps) {
     setPendingRevert(null);
   }
 
+  // Fetches a sent message's attachments so they can return to the composer
+  // once the message leaves the thread, and checks the composer has room.
+  const prepareMessageForComposer = useCallback(
+    async (message: ChatMessage, action: "rewinding" | "editing") => {
+      if (composerRef.current?.hasPendingAttachments()) {
+        throw new Error(`Wait for attachments to finish preparing before ${action}.`);
+      }
+      const connection = readPreparedConnection(environmentId);
+      if (!connection) throw new Error("The environment is not connected.");
+      const files = await prepareRevertedMessageAttachments({
+        message,
+        environmentId,
+        httpBaseUrl: connection.httpBaseUrl,
+        createAssetUrl: createAttachmentAssetUrl,
+      });
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ) {
+        throw new Error(
+          `Make room for this message's attachments in the composer before ${action}.`,
+        );
+      }
+      return files;
+    },
+    [composerDraftTarget, composerRef, createAttachmentAssetUrl, environmentId],
+  );
+
+  // Appends a removed message's text and attachments to the composer.
+  const restoreMessageToComposer = useCallback(
+    (message: ChatMessage, files: ReadonlyArray<File>) => {
+      const store = useComposerDraftStore.getState();
+      const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
+      const restoredPrompt = recallableComposerPrompt(message.text);
+      const nextPrompt =
+        restoredPrompt.length === 0
+          ? currentPrompt
+          : currentPrompt.length > 0
+            ? `${currentPrompt}\n\n${restoredPrompt}`
+            : restoredPrompt;
+      store.setPrompt(composerDraftTarget, nextPrompt);
+      const images: ComposerImageAttachment[] = [];
+      const restoredFiles: ComposerFileAttachment[] = [];
+      files.forEach((file, index) => {
+        const attachment = {
+          id: randomUUID(),
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          file,
+        };
+        if (message.attachments?.[index]?.type === "image") {
+          images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
+        } else {
+          restoredFiles.push({ ...attachment, type: "file" });
+        }
+      });
+      store.addImages(composerDraftTarget, images, { allowDuplicates: true });
+      store.addFiles(composerDraftTarget, restoredFiles, { allowDuplicates: true });
+      if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        promptRef.current = nextPrompt;
+        composerRef.current?.resetCursorState({ prompt: nextPrompt, cursor: nextPrompt.length });
+        requestAnimationFrame(() => {
+          if (currentRouteThreadKeyRef.current === routeThreadKey)
+            composerRef.current?.focusAtEnd();
+        });
+      }
+    },
+    [composerDraftTarget, composerRef, routeThreadKey],
+  );
+
   const onRevertToTurnCount = useCallback(
     async (turnCount: number, messageId: MessageId, restoreFiles?: boolean) => {
       const localApi = readLocalApi();
@@ -7070,27 +7147,7 @@ export default function ChatView(props: ChatViewProps) {
       }));
       setThreadError(activeThread.id, null);
       try {
-        if (composerRef.current?.hasPendingAttachments()) {
-          throw new Error("Wait for attachments to finish preparing before rewinding.");
-        }
-        const connection = readPreparedConnection(environmentId);
-        if (!connection) throw new Error("The environment is not connected.");
-        const files = await prepareRevertedMessageAttachments({
-          message,
-          environmentId,
-          httpBaseUrl: connection.httpBaseUrl,
-          createAssetUrl: createAttachmentAssetUrl,
-        });
-        const store = useComposerDraftStore.getState();
-        const draft = store.getComposerDraft(composerDraftTarget);
-        if (
-          (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
-          PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-        ) {
-          throw new Error(
-            "Make room for this message's attachments in the composer before rewinding.",
-          );
-        }
+        const files = await prepareMessageForComposer(message, "rewinding");
         await waitForRevertedMessage(routeThreadRef, messageId, turnCount, async () => {
           const result = await revertThreadCheckpoint({
             environmentId,
@@ -7098,41 +7155,7 @@ export default function ChatView(props: ChatViewProps) {
           });
           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         });
-        const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
-        const restoredPrompt = recallableComposerPrompt(message.text);
-        const nextPrompt =
-          restoredPrompt.length === 0
-            ? currentPrompt
-            : currentPrompt.length > 0
-              ? `${currentPrompt}\n\n${restoredPrompt}`
-              : restoredPrompt;
-        store.setPrompt(composerDraftTarget, nextPrompt);
-        const images: ComposerImageAttachment[] = [];
-        const restoredFiles: ComposerFileAttachment[] = [];
-        files.forEach((file, index) => {
-          const attachment = {
-            id: randomUUID(),
-            name: file.name,
-            mimeType: file.type,
-            sizeBytes: file.size,
-            file,
-          };
-          if (message.attachments?.[index]?.type === "image") {
-            images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
-          } else {
-            restoredFiles.push({ ...attachment, type: "file" });
-          }
-        });
-        store.addImages(composerDraftTarget, images, { allowDuplicates: true });
-        store.addFiles(composerDraftTarget, restoredFiles, { allowDuplicates: true });
-        if (currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = nextPrompt;
-          composerRef.current?.resetCursorState({ prompt: nextPrompt, cursor: nextPrompt.length });
-          requestAnimationFrame(() => {
-            if (currentRouteThreadKeyRef.current === routeThreadKey)
-              composerRef.current?.focusAtEnd();
-          });
-        }
+        restoreMessageToComposer(message, files);
       } catch (error) {
         setThreadError(
           activeThread.id,
@@ -7150,19 +7173,100 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
-      composerDraftTarget,
-      composerRef,
-      createAttachmentAssetUrl,
       environmentId,
       isConnecting,
       isRevertingCheckpoint,
       isSendBusy,
       phase,
+      prepareMessageForComposer,
+      restoreMessageToComposer,
       revertThreadCheckpoint,
       routeThreadKey,
       routeThreadRef,
       setThreadError,
       supportsConversationRollback,
+    ],
+  );
+
+  // Edit and unsend: stops the reply when one is running, removes the message
+  // and everything after it, and puts the message back in the composer. Unlike
+  // a rewind it needs no file checkpoint, so every sent message supports it.
+  const onEditUserMessage = useCallback(
+    async (messageId: MessageId) => {
+      if (!activeThread || isRevertingCheckpoint) return;
+      const message = activeThread.messages.find((message) => message.id === messageId);
+      if (!message || message.role !== "user") return;
+
+      if (!supportsConversationRollback) {
+        setThreadError(
+          activeThread.id,
+          "This provider cannot remove messages from its conversation. Start a new thread instead.",
+        );
+        return;
+      }
+      if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+        setThreadError(
+          activeThread.id,
+          `Reconnect ${activeEnvironmentUnavailableLabel} before editing messages.`,
+        );
+        return;
+      }
+      const stopReply = canInterruptRunningThread ? onInterrupt : null;
+      if (!stopReply && (phase === "running" || isSendBusy || isConnecting)) {
+        setThreadError(activeThread.id, "Wait for the reply to start before editing.");
+        return;
+      }
+
+      useComposerDraftStore.setState((store) => ({
+        rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
+      }));
+      setThreadError(activeThread.id, null);
+      try {
+        const files = await prepareMessageForComposer(message, "editing");
+        await unsendMessageAndWait({
+          threadRef: routeThreadRef,
+          messageId,
+          stopReply,
+          unsend: async () => {
+            const result = await unsendThreadMessage({
+              environmentId,
+              input: { threadId: activeThread.id, messageId },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+          },
+        });
+        restoreMessageToComposer(message, files);
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to edit the message.",
+        );
+      } finally {
+        useComposerDraftStore.setState((store) => {
+          const remaining = new Set(store.rewindingThreadKeys);
+          remaining.delete(routeThreadKey);
+          return { rewindingThreadKeys: remaining };
+        });
+      }
+    },
+    [
+      activeThread,
+      activeEnvironmentUnavailable,
+      activeEnvironmentUnavailableLabel,
+      canInterruptRunningThread,
+      environmentId,
+      isConnecting,
+      isRevertingCheckpoint,
+      isSendBusy,
+      onInterrupt,
+      phase,
+      prepareMessageForComposer,
+      restoreMessageToComposer,
+      routeThreadKey,
+      routeThreadRef,
+      setThreadError,
+      supportsConversationRollback,
+      unsendThreadMessage,
     ],
   );
 
@@ -9447,6 +9551,11 @@ export default function ChatView(props: ChatViewProps) {
   const onRevertTimelineTurn = useCallback((targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountRef.current(targetTurnCount, messageId);
   }, []);
+  const onEditUserMessageRef = useRef(onEditUserMessage);
+  onEditUserMessageRef.current = onEditUserMessage;
+  const onEditTimelineMessage = useCallback((messageId: MessageId) => {
+    void onEditUserMessageRef.current(messageId);
+  }, []);
 
   // Files dropped on a sidebar row land here once the dropped-on thread is
   // actually open, then take the exact same path as a workspace drop:
@@ -9879,6 +9988,9 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
+                }
+                onEditUserMessage={
+                  paintOnlyDisplayedTimeline ? noopHeldEdit : onEditTimelineMessage
                 }
                 isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}

@@ -1841,6 +1841,66 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.message.unsend": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // The provider cannot drop a turn it is still producing. Clients stop the
+      // reply and wait for the session to settle before unsending.
+      if (thread.session?.status === "starting" || thread.session?.status === "running") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Stop the current reply before editing a message.",
+        });
+      }
+      const message = thread.messages.find((entry) => entry.id === command.messageId);
+      if (message !== undefined && message.role !== "user") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Only your own messages can be edited.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-unsend-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.message.unsend.complete": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-unsent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          messageCreatedAt: command.messageCreatedAt,
+          removedTurnIds: command.removedTurnIds,
+        },
+      };
+    }
+
     case "thread.session.stop": {
       const thread = yield* requireThread({
         readModel,
