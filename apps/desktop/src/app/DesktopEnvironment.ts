@@ -86,8 +86,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
     readonly appImagePath: Option.Option<string>;
-    readonly userDataDirName: string;
-    readonly legacyUserDataDirName: string;
+    // Explicit T3CODE_HOME; a separate instance that gets its own Electron profile.
+    readonly t3Home: Option.Option<string>;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
@@ -188,25 +188,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  // An explicit T3CODE_HOME is a separate instance: give it its own Electron
-  // profile so two instances never fight over one IndexedDB (LevelDB allows a
-  // single lock holder; the loser's renderer never opens its connection store).
-  const baseUserDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const userDataDirName = Option.match(config.t3Home, {
-    onNone: () => baseUserDataDirName,
-    onSome: (t3Home) => {
-      const suffix = path
-        .basename(t3Home.trim())
-        .replace(/^\.+/, "")
-        .replace(/[^A-Za-z0-9._-]+/g, "_");
-      return suffix.length > 0 ? `${baseUserDataDirName}-${suffix}` : baseUserDataDirName;
-    },
-  });
-  const legacyUserDataDirName = Option.isSome(config.t3Home)
-    ? userDataDirName
-    : isDevelopment
-      ? "T3 Code (Dev)"
-      : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -263,8 +244,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
-    userDataDirName,
-    legacyUserDataDirName,
+    t3Home: config.t3Home,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,

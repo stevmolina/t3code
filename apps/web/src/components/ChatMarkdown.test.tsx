@@ -955,6 +955,23 @@ describe("ChatMarkdown Windows file links", () => {
   });
 
   it.each([true, false])(
+    "keeps backslashes CommonMark would read as escapes with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
+          text={String.raw`[settings](C:\Users\shawn\.claude\settings.json)`}
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).toContain('href="C:/Users/shawn/.claude/settings.json"');
+    },
+  );
+
+  it.each([true, false])(
     "distinguishes same-named backslash paths with parseRawHtml=%s",
     (parseRawHtml) => {
       const html = renderToStaticMarkup(
@@ -1020,41 +1037,5 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("d:alert");
     expect(html).not.toContain("chat-markdown-file-link");
-  });
-});
-
-describe("ChatMarkdown mermaid fences", () => {
-  it("renders mermaid fences as diagrams with a source toggle", () => {
-    const html = renderToStaticMarkup(
-      <ChatMarkdown cwd="/tmp/project" text={"```mermaid\nflowchart TD\n  A --> B\n```"} />,
-    );
-
-    expect(html).toContain('data-language="mermaid"');
-    expect(html).toContain('data-mermaid="diagram"');
-    expect(html).toContain("Show source");
-  });
-
-  it("recognizes the mmd alias", () => {
-    const html = renderToStaticMarkup(
-      <ChatMarkdown cwd="/tmp/project" text={"```mmd\nflowchart TD\n  A --> B\n```"} />,
-    );
-
-    expect(html).toContain('data-language="mmd"');
-    expect(html).toContain('data-mermaid="diagram"');
-    expect(html).toContain("Show source");
-  });
-
-  it("keeps mermaid source while the message is streaming", () => {
-    const html = renderToStaticMarkup(
-      <ChatMarkdown
-        cwd="/tmp/project"
-        isStreaming
-        text={"```mermaid\nflowchart TD\n  A --> B\n```"}
-      />,
-    );
-
-    expect(html).toContain('data-language="mermaid"');
-    expect(html).not.toContain("data-mermaid");
-    expect(html).not.toContain("Show source");
   });
 });

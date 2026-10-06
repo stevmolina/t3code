@@ -7,6 +7,7 @@ import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
@@ -272,5 +273,28 @@ describe("workspace provider snapshots", () => {
       resolveProviderSkillsForCwd(provider, null),
     );
     expect(resolveProviderSkillSourceKind(BUILTIN_VISUALIZE_SKILL)).toBe("app");
+  });
+
+  it("uses partial workspace skills and commands while keeping discovery retryable", () => {
+    const partial = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        slashCommands: [{ name: "compact" }],
+        slashCommandsPending: true,
+      })),
+    } satisfies ServerProvider;
+    expect(resolveProviderSkillsForCwd(partial, "/workspace/project-a")).toEqual([
+      ...(provider.workspaceSnapshots[0]?.skills ?? []),
+      BUILTIN_VISUALIZE_SKILL,
+    ]);
+    expect(resolveProviderSlashCommandsForCwd(partial, "/workspace/project-a")).toEqual([
+      { name: "compact" },
+    ]);
+    expect(hasCompleteProviderWorkspaceSnapshot(partial, "/workspace/project-a")).toBe(false);
+    expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-a")).toBe(true);
+    expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-b")).toBe(false);
+    expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
+    expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
   });
 });
