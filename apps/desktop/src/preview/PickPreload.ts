@@ -131,6 +131,7 @@ interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   setSendEnabled: (enabled: boolean) => void;
+  handleKeyDown: (event: KeyboardEvent) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -187,6 +188,20 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+// Register before the inspected page installs capture listeners. Isolation at
+// the shadow root's bubble phase is too late to keep those listeners from
+// cancelling native editing in the annotation fields.
+window.addEventListener("keydown", (event) => activeSession?.handleKeyDown(event), true);
+const isolateAnnotationEditing = (event: Event): void => {
+  if (activeSession && isAnnotationNode(event.target as Element)) {
+    event.stopImmediatePropagation();
+  }
+};
+window.addEventListener("copy", isolateAnnotationEditing, true);
+window.addEventListener("cut", isolateAnnotationEditing, true);
+window.addEventListener("paste", isolateAnnotationEditing, true);
+window.addEventListener("beforeinput", isolateAnnotationEditing, true);
 
 // Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
 const MOUSE_BUTTON_BACK = 3;
@@ -1356,7 +1371,6 @@ function startAnnotation(sendEnabled: boolean): void {
     window.removeEventListener("pointerout", onPointerOut, true);
     window.removeEventListener("click", onClick, true);
     window.removeEventListener("blur", onWindowBlur);
-    window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("scroll", repaint, true);
     window.removeEventListener("resize", repaint);
     dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
@@ -1376,7 +1390,20 @@ function startAnnotation(sendEnabled: boolean): void {
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
+    if (isAnnotationNode(event.target as Element)) {
+      event.stopImmediatePropagation();
+      if (event.key !== "Escape") {
+        const submission =
+          shadowRoot.activeElement === comment
+            ? resolveAnnotationSubmission(event, sendEnabled)
+            : null;
+        if (submission) {
+          event.preventDefault();
+          submitAnnotation(submission);
+        }
+        return;
+      }
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -1461,16 +1488,6 @@ function startAnnotation(sendEnabled: boolean): void {
       });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener("keydown", (event) => {
-    const submission =
-      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Keep this in the bubble phase so editor inputs receive the event before
-    // it is isolated from listeners installed by the inspected page.
-    event.stopImmediatePropagation();
-    if (!submission) return;
-    event.preventDefault();
-    submitAnnotation(submission);
-  });
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
@@ -1478,7 +1495,6 @@ function startAnnotation(sendEnabled: boolean): void {
   window.addEventListener("pointerout", onPointerOut, { capture: true, passive: true });
   window.addEventListener("click", onClick, { capture: true, passive: false });
   window.addEventListener("blur", onWindowBlur);
-  window.addEventListener("keydown", onKeyDown, { capture: true });
   window.addEventListener("scroll", repaint, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
@@ -1489,6 +1505,7 @@ function startAnnotation(sendEnabled: boolean): void {
   updateStatus();
   activeSession = {
     teardown,
+    handleKeyDown: onKeyDown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
     setSendEnabled: (enabled) => {
       sendEnabled = enabled;
