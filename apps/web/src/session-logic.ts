@@ -1048,11 +1048,14 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   /** The run still replying. Its message rewinds to the turns before it once Edit stops it. */
   readonly activeRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  const rewindableCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
   let turnsBeforeActiveRun = 0;
   for (const checkpoint of input.checkpoints) {
-    if (checkpoint.status === "ready") {
-      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+    // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
+    // but still pin a conversation position that a conversation-only rewind
+    // ("Revert and keep changes") can roll back to.
+    if (checkpoint.status === "ready" || checkpoint.status === "missing") {
+      rewindableCheckpointByRunId.set(checkpoint.runId, checkpoint);
     }
     if (checkpoint.runId !== input.activeRunId) {
       turnsBeforeActiveRun = Math.max(turnsBeforeActiveRun, checkpoint.checkpointTurnCount);
@@ -1065,7 +1068,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       continue;
     }
     if (entry.message.runId === null) continue;
-    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
+    const checkpoint = rewindableCheckpointByRunId.get(entry.message.runId);
     if (checkpoint === undefined) {
       if (entry.message.runId === input.activeRunId) {
         byUserMessageId.set(entry.message.id, turnsBeforeActiveRun);
