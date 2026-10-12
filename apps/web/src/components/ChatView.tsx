@@ -11225,6 +11225,7 @@ export default function ChatView(props: ChatViewProps) {
             });
         }}
         threadRef={activeThreadRef}
+        threadWorkspaceRoot={activeWorkspaceRoot ?? null}
         reference={{
           projectId: renderedRightPanelSurface.projectId as ProjectId,
           ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),

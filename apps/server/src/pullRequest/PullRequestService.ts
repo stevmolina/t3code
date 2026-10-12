@@ -94,6 +94,7 @@ import {
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
+import { findNestedCheckouts } from "./nestedCheckouts.ts";
 
 export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
@@ -717,6 +718,13 @@ export const make = Effect.gen(function* () {
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
+  // Clones below each project folder. A pull request read resolves its project every time, so
+  // the folder walk is held for a while; a clone added since shows up within the minute.
+  const nestedCheckouts = yield* Cache.makeWith(findNestedCheckouts, {
+    capacity: 64,
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(5) : Duration.minutes(1),
+  });
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -940,7 +948,7 @@ export const make = Effect.gen(function* () {
         ).pipe(
           Effect.flatMap(({ supported }) => {
             const onHost = supported.filter((candidate) => candidate.host === host);
-            const route =
+            const checkout =
               supported.find(
                 (candidate) =>
                   candidate.repositoryKey !== null && candidate.repositoryKey === repositoryKey,
@@ -949,57 +957,113 @@ export const make = Effect.gen(function* () {
                 (candidate) =>
                   candidate.repositoryKey === null &&
                   candidate.repository.toLowerCase() === repository.toLowerCase(),
-              ) ??
-              onHost.find((candidate) => candidate.repositoryKey === null);
-            if (route === undefined) {
-              return Effect.gen(function* () {
-                // These providers target the repository explicitly and authenticate by host;
-                // a linked PR in a non-repository project still needs its snapshot refreshed.
-                // GitLab still selects its host from the checkout or CLI configuration.
-                const provider = ["github.com", "bitbucket.org", "codeberg.org"].includes(host)
-                  ? detectSourceControlProviderFromRemoteUrl(`https://${host}/${repository}.git`)
-                  : null;
-                const api = provider === null ? null : registry.get(provider.kind);
-                if (api !== null) {
-                  const selected = yield* projects.getShell(ref.projectId).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new PullRequestOperationError({
-                          operation: "resolveRepository",
-                          detail: "The selected project could not be read.",
-                          cause,
-                        }),
-                    ),
-                  );
-                  if (Option.isSome(selected)) {
-                    return {
-                      cursorKey: listCursorKey(host, repository),
-                      project: selected.value,
-                      api: withRateLimitBackoff(api, host, rateLimits),
-                      repository,
-                      host,
-                      remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
-                      repositoryKey: null,
-                    };
-                  }
-                }
-                return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
-              });
-            }
-            return Effect.succeed(
-              route.repositoryKey !== null ||
-                route.repository.toLowerCase() === repository.toLowerCase()
-                ? route
-                : {
-                    ...route,
-                    repository,
-                    remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
-                  },
+              );
+            if (checkout !== undefined) return Effect.succeed(checkout);
+            // A project folder that holds the repository's clone, rather than being it, reads
+            // through that clone, so the pull request's files resolve where they live.
+            return nestedCheckoutFor(ref.projectId, host, repository, repositoryKey).pipe(
+              Effect.flatMap((nested) =>
+                nested === null
+                  ? routeWithoutCheckout(ref, host, repository, onHost)
+                  : Effect.succeed(nested),
+              ),
             );
           }),
         );
       }),
     );
+
+  const isProviderKind = Schema.is(SourceControlProviderKind);
+  /**
+   * The clone of `owner/repo` on `host` inside the selected project's folder, for a project that
+   * holds repositories rather than being one. It serves the reference with the project's id and
+   * the clone as its folder, so reads, checkouts and file paths all land in the clone.
+   */
+  const nestedCheckoutFor = Effect.fn("PullRequestService.nestedCheckoutFor")(function* (
+    projectId: ProjectId,
+    host: string,
+    repository: string,
+    repositoryKey: string,
+  ) {
+    const selected = yield* projects
+      .getShell(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
+    if (Option.isNone(selected)) return null;
+    const checkouts = yield* Cache.get(nestedCheckouts, selected.value.workspaceRoot);
+    for (const checkout of checkouts) {
+      const identity = yield* repositoryIdentities.resolve(checkout);
+      if (identity === null) continue;
+      const keys = [identity.canonicalKey, identity.origin?.canonicalKey].flatMap((key) =>
+        key === undefined ? [] : [canonicalRepositoryKey(key.toLowerCase())],
+      );
+      if (!keys.includes(repositoryKey)) continue;
+      const kind = identity.provider;
+      const api = kind !== undefined && isProviderKind(kind) ? registry.get(kind) : null;
+      if (api === null) return null;
+      return {
+        cursorKey: listCursorKey(host, repository),
+        project: { ...selected.value, workspaceRoot: checkout },
+        api: withRateLimitBackoff(api, host, rateLimits),
+        repository,
+        host,
+        remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+        repositoryKey: null,
+      } satisfies SupportedProject;
+    }
+    return null;
+  });
+
+  /**
+   * A reference no checkout of its repository serves. Providers with explicit repository
+   * targeting borrow another checkout on the host; public hosts fall back to the selected
+   * project's folder.
+   */
+  const routeWithoutCheckout = Effect.fn("PullRequestService.routeWithoutCheckout")(function* (
+    ref: PullRequestRef,
+    host: string,
+    repository: string,
+    onHost: ReadonlyArray<SupportedProject>,
+  ) {
+    const route = onHost.find((candidate) => candidate.repositoryKey === null);
+    if (route !== undefined) {
+      return {
+        ...route,
+        repository,
+        remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+      } satisfies SupportedProject;
+    }
+    // These providers target the repository explicitly and authenticate by host;
+    // a linked PR in a non-repository project still needs its snapshot refreshed.
+    // GitLab still selects its host from the checkout or CLI configuration.
+    const provider = ["github.com", "bitbucket.org", "codeberg.org"].includes(host)
+      ? detectSourceControlProviderFromRemoteUrl(`https://${host}/${repository}.git`)
+      : null;
+    const api = provider === null ? null : registry.get(provider.kind);
+    if (api !== null) {
+      const selected = yield* projects.getShell(ref.projectId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PullRequestOperationError({
+              operation: "resolveRepository",
+              detail: "The selected project could not be read.",
+              cause,
+            }),
+        ),
+      );
+      if (Option.isSome(selected)) {
+        return {
+          cursorKey: listCursorKey(host, repository),
+          project: selected.value,
+          api: withRateLimitBackoff(api, host, rateLimits),
+          repository,
+          host,
+          remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+          repositoryKey: null,
+        } satisfies SupportedProject;
+      }
+    }
+    return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+  });
 
   const canonicalRef = Effect.fn("PullRequestService.canonicalRef")(function* <
     I extends PullRequestRef,

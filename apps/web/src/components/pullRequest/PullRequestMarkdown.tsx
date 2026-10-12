@@ -1,6 +1,7 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
@@ -16,6 +17,8 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
   threadRef: ScopedThreadRef | null;
+  /** The folder the thread's file panel opens paths from, when the panel sits beside a thread. */
+  threadWorkspaceRoot?: string | null;
 } | null>(null);
 
 /**
@@ -77,6 +80,15 @@ export function PullRequestMarkdown({
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
+  // The pull request's clone can sit inside the thread's folder, as one of several repositories
+  // a project holds. The body's paths start at the clone; the file panel opens from the thread's
+  // folder, so links are anchored at the clone and opened relative to the thread.
+  const threadWorkspaceRoot = context?.threadWorkspaceRoot ?? null;
+  const cloneInThread = workspaceRelativeFilePath(cwd, threadWorkspaceRoot);
+  const markdownCwd =
+    threadWorkspaceRoot !== null && cloneInThread !== null && cloneInThread !== "."
+      ? threadWorkspaceRoot
+      : cwd;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
     [repositoryUrl],
@@ -95,7 +107,8 @@ export function PullRequestMarkdown({
             <ChatMarkdown
               key={segment.id}
               text={segment.kind === "markdown" ? segment.text : `![](<${segment.url}>)`}
-              cwd={cwd}
+              cwd={markdownCwd}
+              imageBaseDir={cwd}
               threadRef={resolvedThreadRef}
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}

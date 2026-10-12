@@ -10,6 +10,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -510,6 +511,8 @@ function makeService(input: {
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
         }),
         SourceControlRateLimit.layer,
+        // The real filesystem, which finds clones below a project folder.
+        NodeServices.layer,
         // The real store over a database of its own, so the environment-kept marks are exercised
         // through the SQL that holds them rather than through a stand-in that agrees with itself.
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -2640,6 +2643,65 @@ it.effect("prefers a matching checkout over a non-repository project's directory
     );
     assert.deepStrictEqual(seen, ["/api"]);
   }),
+);
+
+it.effect(
+  "reads a linked PR through its clone inside a project folder that holds repositories",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-nested-checkout-" });
+      const apiClone = `${root}/projects/api`;
+      for (const checkout of [apiClone, `${root}/projects/web`, `${root}/node_modules/api`]) {
+        yield* fs.makeDirectory(`${checkout}/.git`, { recursive: true });
+      }
+      const identities = new Map([
+        [apiClone, project({ id: "x", title: "x", workspaceRoot: "/", repository: "acme/api" })],
+        [
+          `${root}/projects/web`,
+          project({ id: "y", title: "y", workspaceRoot: "/", repository: "acme/web" }),
+        ],
+        [
+          `${root}/node_modules/api`,
+          project({ id: "z", title: "z", workspaceRoot: "/", repository: "acme/api" }),
+        ],
+      ]);
+      const seen: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "engagement", title: "Engagement", workspaceRoot: root }),
+          // Another repository on the same host, which the reference used to borrow.
+          project({
+            id: "other",
+            title: "Other",
+            workspaceRoot: "/other",
+            repository: "acme/other",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestSummary: (input) =>
+              Effect.sync(() => {
+                seen.push(input.cwd);
+                return changeRequest(7, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) =>
+          Effect.succeed(identities.get(cwd)?.repositoryIdentity ?? null),
+      });
+      const summary = yield* service.summary(
+        {
+          projectId: "engagement" as ProjectId,
+          host: "github.com",
+          repository: "acme/api",
+          number: 7,
+        },
+        { recoverTransientFailure: false },
+      );
+      assert.strictEqual(summary.projectId, "engagement");
+      assert.deepStrictEqual(seen, [apiClone]);
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("requires an explicit host for a non-repository project's linked PR", () =>

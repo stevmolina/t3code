@@ -410,6 +410,7 @@ export function PullRequestDetailPanel({
   shortcutsEnabled,
   getShortcutContext,
   threadRef = null,
+  threadWorkspaceRoot = null,
   reference: requestedReference,
   listEntry = null,
   refreshToken: forcedRefreshToken = 0,
@@ -432,6 +433,8 @@ export function PullRequestDetailPanel({
    * there they always go to the system browser.
    */
   threadRef?: ScopedThreadRef | null;
+  /** The folder that thread's file panel opens paths from. */
+  threadWorkspaceRoot?: string | null;
   reference: PullRequestRef;
   /** Row fields already loaded by the pull-request list, used while richer detail arrives. */
   listEntry?: PullRequestListEntry | null;
@@ -802,8 +805,9 @@ export function PullRequestDetailPanel({
       repositoryUrl:
         repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
       threadRef,
+      threadWorkspaceRoot,
     }),
-    [hostClient, repositoryUrl, threadRef],
+    [hostClient, repositoryUrl, threadRef, threadWorkspaceRoot],
   );
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null
