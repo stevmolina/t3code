@@ -4189,7 +4189,8 @@ export default function ChatView(props: ChatViewProps) {
   const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
     useLocalStorage(
       `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
-      false,
+      // Custom build: stale Claude sessions never compact before a send.
+      true,
       Schema.Boolean,
     );
   const nativeResumeCompactionDismissed = useMemo(
