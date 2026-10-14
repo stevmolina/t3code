@@ -285,4 +285,16 @@ describe("threadHtmlRenderAttachmentIds", () => {
       ]),
     ).toEqual([app]);
   });
+
+  it("includes Visualize pages a reply cites, and only this thread's", () => {
+    const own = createAttachmentId("thread-a", "html")!;
+    const other = createAttachmentId("thread-b", "html")!;
+    const cite = (attachmentId: string) =>
+      `\uE200visualize\uE202${JSON.stringify({ path: "/tmp/v.html", attachmentId })}\uE201`;
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        { text: `Here:\n${cite(own)}\n${cite(other)}\nDone.` },
+      ]),
+    ).toEqual([own]);
+  });
 });

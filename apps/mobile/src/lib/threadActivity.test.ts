@@ -2739,6 +2739,29 @@ describe("html renders", () => {
   });
 });
 
+describe("Visualize citations", () => {
+  const stored = `\uE200visualize\uE202${JSON.stringify({ path: "/tmp/v.html", title: "Revenue", attachmentId: "attachment-viz" })}\uE201`;
+  const reply = (streaming: boolean) => ({
+    ...assistantMessage(),
+    text: `Monthly revenue:\n\n${stored}\n\nUp 12%.`,
+    streaming,
+  });
+
+  it("shows a completed reply's stored pages as rows after its text", () => {
+    const entries = buildThreadFeed([projected(reply(false), 0)]);
+    expect(entries.map((entry) => entry.type)).toEqual(["message", "html-render"]);
+    expect(entries[0]).toMatchObject({ message: { text: "Monthly revenue:\n\nUp 12%." } });
+    expect(entries[1]).toMatchObject({
+      render: { attachmentId: "attachment-viz", title: "Revenue" },
+    });
+  });
+
+  it("leaves a streaming reply as written", () => {
+    const entries = buildThreadFeed([projected(reply(true), 0)]);
+    expect(entries.map((entry) => entry.type)).toEqual(["message"]);
+  });
+});
+
 describe("MCP apps", () => {
   const app = {
     attachmentId: "attachment-app",

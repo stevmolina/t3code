@@ -105,6 +105,12 @@ import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import {
+  fenceVisualizeCitations,
+  parseVisualizeCitation,
+  VISUALIZE_FENCE_LANGUAGE,
+  visualizeRenderReference,
+} from "@t3tools/shared/visualize";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -216,6 +222,7 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { VisualizeFrame } from "./chat/VisualizeFrame";
 
 interface ChatMarkdownProps {
   text: string;
@@ -3400,15 +3407,38 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      resolvedTheme,
+      diffThemeName,
+      environmentId,
+      expandMedia,
+      isStreaming,
+      onRunShellCommand,
+      text,
+      threadRef,
+    } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
 
     const language = extractFenceLanguage(codeBlock.className);
+    if (language === VISUALIZE_FENCE_LANGUAGE) {
+      // Citations get their stored page when the reply completes.
+      if (isStreaming) return null;
+      const citation = parseVisualizeCitation(codeBlock.code);
+      const render = citation === null ? undefined : visualizeRenderReference(citation);
+      if (render !== undefined && environmentId !== null) {
+        return (
+          <VisualizeFrame
+            environmentId={environmentId}
+            threadRef={threadRef}
+            render={render}
+            fallback={<pre {...props}>{children}</pre>}
+          />
+        );
+      }
+    }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
       <RenderErrorBoundary
@@ -3473,6 +3503,7 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  const markdown = useMemo(() => fenceVisualizeCitations(text), [text]);
   const {
     componentState,
     handleCopy,
@@ -3480,11 +3511,11 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, ...props });
+  } = useChatMarkdownState({ text: markdown, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
-    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(markdown);
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
@@ -3520,7 +3551,7 @@ function ChatMarkdown({
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {markdown}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (

@@ -124,6 +124,7 @@ import {
   MCP_APP_RESOURCE_SCHEME,
 } from "@t3tools/shared/mcpApp";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
+import { snapshotVisualizeCitations } from "../../htmlRender/VisualizeSnapshot.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -5074,10 +5075,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const completedTextsBefore =
               (yield* Ref.get(completedFinalAnswerTextsByTurn)).get(payload.turnId) ??
               new Set<string>();
+            // Visualize citations name a file the agent can rewrite or delete,
+            // so the reply records a stored copy of each.
+            const finalText = yield* snapshotVisualizeCitations({
+              attachmentsDir: serverConfig.attachmentsDir,
+              threadId: context.projectionThreadId,
+              text: payload.item.text,
+            }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
             const text = yield* agentMessageDeltas.complete({
               turnId: payload.turnId,
               itemId: payload.item.id,
-              finalText: payload.item.text,
+              finalText,
             });
             yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
               const itemIds = current.get(payload.turnId);
