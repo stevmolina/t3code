@@ -131,6 +131,7 @@ interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   setSendEnabled: (enabled: boolean) => void;
+  onEditorKeyDown: (event: KeyboardEvent) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -187,6 +188,18 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+// The preload runs before the inspected page's scripts, so these capture
+// listeners fire before any the page installs. Stopping editing events here
+// keeps the page from cancelling typing, copy, cut or paste in the annotation.
+const isolateAnnotationEditing = (event: Event): void => {
+  if (!activeSession || !isAnnotationNode(event.target as Element)) return;
+  event.stopImmediatePropagation();
+  if (event.type === "keydown") activeSession.onEditorKeyDown(event as KeyboardEvent);
+};
+for (const type of ["keydown", "keypress", "copy", "cut", "paste", "beforeinput"]) {
+  window.addEventListener(type, isolateAnnotationEditing, true);
+}
 
 // Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
 const MOUSE_BUTTON_BACK = 3;
@@ -1379,7 +1392,6 @@ function startAnnotation(sendEnabled: boolean): void {
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -1464,16 +1476,18 @@ function startAnnotation(sendEnabled: boolean): void {
       });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener("keydown", (event) => {
+  const onEditorKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      teardown(true);
+      return;
+    }
     const submission =
-      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Keep this in the bubble phase so editor inputs receive the event before
-    // it is isolated from listeners installed by the inspected page.
-    event.stopImmediatePropagation();
+      shadowRoot.activeElement === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     if (!submission) return;
     event.preventDefault();
     submitAnnotation(submission);
-  });
+  };
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
@@ -1492,6 +1506,7 @@ function startAnnotation(sendEnabled: boolean): void {
   updateStatus();
   activeSession = {
     teardown,
+    onEditorKeyDown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
     setSendEnabled: (enabled) => {
       sendEnabled = enabled;
