@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import type { ChatAttachment } from "@t3tools/contracts";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import { findVisualizeCitations } from "@t3tools/shared/visualize";
 
 import {
   normalizeAttachmentRelativePath,
@@ -131,23 +132,30 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
 }
 
 /**
- * Attachments a thread's tool calls published: `html_render` pages and
- * captured MCP App documents. Only ids minted for this thread count, so
- * deleting a fork never removes its source's pages.
+ * Attachments a thread's turn items published: `html_render` pages, captured
+ * MCP App documents, and stored Visualize fragments cited in replies. Only ids
+ * minted for this thread count, so deleting a fork never removes its source's
+ * pages.
  */
 export function threadHtmlRenderAttachmentIds(
   threadId: string,
-  items: Iterable<{ readonly toolName: string | null | undefined; readonly output?: unknown }>,
+  items: Iterable<{
+    readonly toolName?: string | null | undefined;
+    readonly output?: unknown;
+    readonly text?: string | undefined;
+  }>,
 ) {
   const segment = toSafeThreadAttachmentSegment(threadId);
   if (segment === null) return [];
   return Array.from(items).flatMap((item) => {
-    const attachmentId =
-      htmlRenderFromToolItem(item)?.attachmentId ?? mcpAppFromToolItem(item)?.attachmentId;
-    return attachmentId !== undefined &&
-      parseThreadSegmentFromAttachmentId(attachmentId) === segment
-      ? [attachmentId]
-      : [];
+    const tool = { toolName: item.toolName, output: item.output };
+    return [
+      htmlRenderFromToolItem(tool)?.attachmentId ?? mcpAppFromToolItem(tool)?.attachmentId,
+      ...findVisualizeCitations(item.text ?? "").map((citation) => citation.attachmentId),
+    ].filter(
+      (attachmentId): attachmentId is string =>
+        attachmentId !== undefined && parseThreadSegmentFromAttachmentId(attachmentId) === segment,
+    );
   });
 }
 

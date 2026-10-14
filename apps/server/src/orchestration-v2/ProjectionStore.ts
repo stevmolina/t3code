@@ -4831,14 +4831,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
     `,
-        // Pages published by html_render, and captured MCP App documents,
-        // live in the attachment store too.
+        // Pages published by html_render, captured MCP App documents, and
+        // stored Visualize fragments live in the attachment store too.
         sql<{ payload_json: string }>`
       SELECT payload_json
       FROM orchestration_v2_projection_turn_items
       WHERE thread_id = ${threadId}
-        AND type = 'dynamic_tool'
-        AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`})
+        AND ((type = 'dynamic_tool'
+          AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}))
+          OR (type = 'assistant_message' AND payload_json LIKE '%attachmentId%'))
     `,
       ]).pipe(
         Effect.map(([messages, renders]) => [
@@ -4851,6 +4852,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 return {
                   toolName: typeof item.toolName === "string" ? item.toolName : null,
                   output: item.output,
+                  text: typeof item.text === "string" ? item.text : undefined,
                 };
               }),
             ),
@@ -6390,7 +6392,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               ...threadHtmlRenderAttachmentIds(
                 threadId,
                 projection.turnItems.flatMap((item) =>
-                  item.type === "dynamic_tool" ? [item] : [],
+                  item.type === "dynamic_tool" || item.type === "assistant_message" ? [item] : [],
                 ),
               ),
             ]),

@@ -63,6 +63,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
+import { splitVisualizeCitations } from "@t3tools/shared/visualize";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import {
   compactDynamicToolOutput,
@@ -1843,6 +1844,11 @@ export function buildThreadFeed(
     }
     if (item.type === "user_message" || item.type === "assistant_message") {
       const updatedAt = DateTime.formatIso(item.updatedAt);
+      // Stored Visualize pages show as their own rows after the reply.
+      const visualized =
+        item.type === "assistant_message" && !item.streaming
+          ? splitVisualizeCitations(item.text)
+          : { text: item.text, renders: [] };
       const entry: RawThreadFeedEntry = {
         type: "message",
         id: item.messageId,
@@ -1850,7 +1856,7 @@ export function buildThreadFeed(
         message: {
           id: item.messageId,
           role: item.type === "user_message" ? "user" : "assistant",
-          text: item.text,
+          text: visualized.text,
           ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
           attachments: item.attachments ?? [],
           runId: item.runId,
@@ -1871,8 +1877,20 @@ export function buildThreadFeed(
           projectedItem: row,
         },
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
       entries.push(entry);
+      if (visualized.renders.length > 0) {
+        entries.push(
+          ...visualized.renders.map((render, index): RawThreadFeedEntry => ({
+            type: "html-render",
+            id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}:${index}`,
+            createdAt,
+            runId: item.runId,
+            render,
+          })),
+        );
+      } else {
+        projectedEntriesCache.set(row, { attemptId, entry });
+      }
       continue;
     }
     const activity = toFeedActivity(row, attemptId);
