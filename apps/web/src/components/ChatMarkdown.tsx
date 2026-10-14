@@ -3382,7 +3382,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const source = String(node?.properties.dataMathSource ?? math);
       const fallback = (
         <code
-          className={displayMath ? "chat-markdown-math-display" : "chat-markdown-math-inline"}
+          className={displayMath ? "chat-markdown-math-display" : undefined}
           data-markdown-copy={displayMath ? `\n\n${source}\n\n` : source}
         >
           {source}

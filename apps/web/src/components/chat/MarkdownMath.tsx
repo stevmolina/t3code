@@ -30,7 +30,7 @@ export default memo(function MarkdownMath({
 
   return (
     <span
-      className={display ? "chat-markdown-math-display" : "chat-markdown-math-inline"}
+      className={display ? "chat-markdown-math-display" : undefined}
       data-markdown-copy={display ? `\n\n${source}\n\n` : source}
     >
       {html === null ? <code>{source}</code> : <span dangerouslySetInnerHTML={{ __html: html }} />}

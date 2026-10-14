@@ -1775,7 +1775,7 @@ code {
   margin-bottom: 0;
 }
 
-/* The math classes also mark where the clipboard copies a formula's TeX source. */
+/* Display formulas scroll sideways inside the message column. */
 .chat-markdown-math-display {
   display: block;
   margin-block: 0.75rem;
