@@ -5,6 +5,7 @@ import {
   findVisualizeCitations,
   formatVisualizeCitation,
   mapVisualizeCitations,
+  VISUALIZE_FOLLOW_UP_METHOD,
 } from "@t3tools/shared/visualize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -53,10 +54,14 @@ small,.text-small{font-size:12px}.text-muted{color:var(--muted-foreground)}.tabu
 .table{width:100%;border-collapse:collapse}.table :is(th,td){padding:6px 8px;border-bottom:1px solid var(--border);text-align:start}
 .progress{display:flex;height:8px;overflow:hidden;border-radius:999px;background:var(--muted)}.progress-bar{background:var(--viz-series-1)}`;
 
+// Custom build: Codex's follow-up buttons post their prompt to the client, which
+// drafts it in the composer. Widget state is accepted and not kept.
+const FOLLOW_UP_BRIDGE = `<script>window.openai=Object.assign(window.openai||{},{sendFollowUpMessage:function(m){parent.postMessage({jsonrpc:"2.0",method:"${VISUALIZE_FOLLOW_UP_METHOD}",params:{prompt:String((m&&m.prompt)||"")}},"*");return Promise.resolve()},setWidgetState:function(){return Promise.resolve()}})</script>`;
+
 /** The stored page for a fragment: the HTML render theme, Codex's vocabulary, and its policy. */
 function visualizePage(fragment: string): string {
   return injectHtmlRenderBootstrap(
-    `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${VISUALIZE_POLICY}"><style>${CODEX_VOCABULARY}</style></head><body>${fragment}</body></html>`,
+    `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${VISUALIZE_POLICY}"><style>${CODEX_VOCABULARY}</style>${FOLLOW_UP_BRIDGE}</head><body>${fragment}</body></html>`,
   );
 }
 

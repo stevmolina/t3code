@@ -44,6 +44,7 @@ describe("snapshotVisualizeCitations", () => {
       expect(page).toContain('<style id="t3-theme">');
       expect(page).toContain("connect-src 'none'");
       expect(page).toContain("https://cdn.jsdelivr.net");
+      expect(page).toContain("t3/visualize/follow-up");
 
       // The reply keeps what it showed when the agent rewrites the file, and
       // completing the same reply again stores no second page.

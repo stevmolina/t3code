@@ -134,3 +134,6 @@ export function splitVisualizeCitations(text: string): {
   });
   return { text: renders.length === 0 ? text : rest.replace(/\n{3,}/g, "\n\n").trim(), renders };
 }
+
+/** Custom build: a stored page's `sendFollowUpMessage`, which drafts its prompt in the composer. */
+export const VISUALIZE_FOLLOW_UP_METHOD = "t3/visualize/follow-up";
