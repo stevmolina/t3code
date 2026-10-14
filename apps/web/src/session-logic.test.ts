@@ -326,7 +326,7 @@ describe("V2 session presentation", () => {
           runId: done,
           checkpointTurnCount: 1,
           checkpointRef: "checkpoint-run-1" as never,
-          status: "capturing",
+          status: "missing",
           files: [],
           assistantMessageId: null,
           completedAt: "2026-06-20T00:00:03.000Z",
