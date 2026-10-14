@@ -1169,7 +1169,7 @@ export async function waitForRevertedMessage(
 
 /**
  * Resolves once no run is active and the rollback point for `turnCount` is
- * captured, so Edit from here can follow a reply it just stopped.
+ * recorded, so Edit from here can follow a reply it just stopped.
  */
 export function waitForRollbackPoint(
   threadRef: ScopedThreadRef,
@@ -1188,7 +1188,8 @@ export function waitForRollbackPoint(
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount,
     );
-    return !busy && point?.status === "ready";
+    // A conversation-only rewind may target a point without a file snapshot.
+    return !busy && (point?.status === "ready" || point?.status === "missing");
   };
   return new Promise<void>((resolve, reject) => {
     if (ready()) return resolve();

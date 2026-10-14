@@ -2196,7 +2196,7 @@ describe("waitForRollbackPoint", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("waits for a stopped reply to settle and capture the rollback point", async () => {
-    const state = Atom.make({ data: projection("running", "capturing") });
+    const state = Atom.make({ data: projection("running", "stale") });
     vi.spyOn(environmentThreadDetails, "stateAtom").mockReturnValue(state as never);
     let settled = false;
     const waiting = waitForRollbackPoint(threadRef, 1).then(() => {
@@ -2205,7 +2205,7 @@ describe("waitForRollbackPoint", () => {
     appAtomRegistry.set(state, { data: projection("running", "ready") });
     await Promise.resolve();
     expect(settled).toBe(false);
-    appAtomRegistry.set(state, { data: projection("interrupted", "ready") });
+    appAtomRegistry.set(state, { data: projection("interrupted", "missing") });
     await waiting;
     expect(settled).toBe(true);
   });
