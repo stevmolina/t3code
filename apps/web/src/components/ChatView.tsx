@@ -549,8 +549,8 @@ import {
   readFileAsDataUrl,
   resolveFileAttachmentUrl,
   prepareRevertedMessageAttachments,
-  waitForEditableMessage,
   waitForRevertedMessage,
+  waitForRollbackPoint,
   reconcileMountedTerminalThreadIds,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
@@ -1561,7 +1561,6 @@ const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
 const noopHeldTurnDiff = (_turnId: RunId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
-const noopHeldEdit = (_messageId: MessageId) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
 
 /**
@@ -8511,13 +8510,7 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   const onRevertToTurnCount = useCallback(
-    async (
-      turnCount: number,
-      messageId: MessageId,
-      restoreFiles?: boolean,
-      // Set by Edit message, which has already stopped the reply.
-      replyStopped = false,
-    ) => {
+    async (turnCount: number, messageId: MessageId, restoreFiles?: boolean) => {
       const localApi = readLocalApi();
       if (
         !localApi ||
@@ -8556,11 +8549,13 @@ export default function ChatView(props: ChatViewProps) {
         );
         return;
       }
-      if (!replyStopped && (phase === "running" || isSendBusy || isConnecting)) {
+      // A running reply is stopped first; its edit keeps workspace files, so it skips the dialog.
+      const busy = phase === "running" || isSendBusy || isConnecting;
+      if (busy && !canInterruptRunningThread) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
-      if (restoreFiles === undefined) {
+      if (restoreFiles === undefined && !busy) {
         setPendingRevert({ turnCount, messageId, routeThreadKey });
         return;
       }
@@ -8575,6 +8570,10 @@ export default function ChatView(props: ChatViewProps) {
         }
         const connection = readPreparedConnection(environmentId);
         if (!connection) throw new Error("The environment is not connected.");
+        if (busy) {
+          await onInterrupt();
+          await waitForRollbackPoint(routeThreadRef, turnCount);
+        }
         const files = await prepareRevertedMessageAttachments({
           message,
           environmentId,
@@ -8595,7 +8594,12 @@ export default function ChatView(props: ChatViewProps) {
         await waitForRevertedMessage(routeThreadRef, messageId, turnCount, commandId, async () => {
           const result = await revertThreadCheckpoint({
             environmentId,
-            input: { commandId, threadId: activeThread.id, turnCount, restoreFiles },
+            input: {
+              commandId,
+              threadId: activeThread.id,
+              turnCount,
+              restoreFiles: restoreFiles ?? false,
+            },
           });
           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         });
@@ -8651,6 +8655,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
+      canInterruptRunningThread,
       composerDraftTarget,
       composerRef,
       createAttachmentAssetUrl,
@@ -8658,6 +8663,7 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting,
       isRevertingCheckpoint,
       isSendBusy,
+      onInterrupt,
       phase,
       revertThreadCheckpoint,
       routeThreadKey,
@@ -8665,51 +8671,6 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError,
       supportsConversationRollback,
       serverProjection,
-    ],
-  );
-
-  // Edit message: stops a running reply, then rewinds the conversation to just
-  // before the message, keeping workspace files, and puts it back in the composer.
-  const onEditUserMessage = useCallback(
-    async (messageId: MessageId) => {
-      if (!activeThread || isRevertingCheckpoint) return;
-      const busy = phase === "running" || isSendBusy || isConnecting;
-      if (busy && !canInterruptRunningThread) {
-        setThreadError(activeThread.id, "Wait for the reply to start before editing.");
-        return;
-      }
-      useComposerDraftStore.setState((store) => ({
-        rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
-      }));
-      try {
-        if (busy) await onInterrupt();
-        const turnCount = await waitForEditableMessage(routeThreadRef, messageId, busy);
-        await onRevertToTurnCount(turnCount, messageId, false, true);
-      } catch (error) {
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to edit the message.",
-        );
-      } finally {
-        useComposerDraftStore.setState((store) => {
-          const remaining = new Set(store.rewindingThreadKeys);
-          remaining.delete(routeThreadKey);
-          return { rewindingThreadKeys: remaining };
-        });
-      }
-    },
-    [
-      activeThread,
-      canInterruptRunningThread,
-      isConnecting,
-      isRevertingCheckpoint,
-      isSendBusy,
-      onInterrupt,
-      onRevertToTurnCount,
-      phase,
-      routeThreadKey,
-      routeThreadRef,
-      setThreadError,
     ],
   );
 
@@ -11163,11 +11124,6 @@ export default function ChatView(props: ChatViewProps) {
   const onRevertTimelineTurn = useCallback((targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountRef.current(targetTurnCount, messageId);
   }, []);
-  const onEditUserMessageRef = useRef(onEditUserMessage);
-  onEditUserMessageRef.current = onEditUserMessage;
-  const onEditTimelineMessage = useCallback((messageId: MessageId) => {
-    void onEditUserMessageRef.current(messageId);
-  }, []);
 
   const pendingSidebarFileDrops = useSidebarPendingFileDropStore((state) => state.pending);
   const consumePendingFileDrop = useSidebarPendingFileDropStore(
@@ -11705,9 +11661,6 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
-                }
-                onEditUserMessage={
-                  paintOnlyDisplayedTimeline ? noopHeldEdit : onEditTimelineMessage
                 }
                 {...(!paintOnlyDisplayedTimeline
                   ? { onUseArtifactTemplate: useArtifactTemplate, onSendAppMessage: sendAppMessage }

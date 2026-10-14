@@ -610,8 +610,6 @@ type MessagesTimelineRowContent =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
-      /** The message can be taken back into the composer, stopping a running reply first. */
-      editable?: boolean | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -1427,10 +1425,12 @@ export function deriveMessagesTimelineRows(input: {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
   }
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: timelineEntries,
         checkpoints: input.turnDiffSummaries,
+        activeRunId: unsettledRunId,
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
@@ -1438,7 +1438,6 @@ export function deriveMessagesTimelineRows(input: {
     timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
-  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
@@ -1911,12 +1910,6 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
-      editable:
-        input.supportsConversationRollback &&
-        timelineEntry.message.role === "user" &&
-        timelineEntry.message.runId !== null &&
-        (timelineEntry.message.inputIntent === "turn_start" ||
-          timelineEntry.message.inputIntent === "queued_turn"),
     });
   }
 
@@ -2363,8 +2356,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount &&
-        a.editable === bm.editable
+        a.revertTurnCount === bm.revertTurnCount
       );
     }
   }

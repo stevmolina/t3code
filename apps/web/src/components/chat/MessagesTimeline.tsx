@@ -137,7 +137,6 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
-  PencilIcon,
   MinusIcon,
   Redo2Icon,
   Minimize2Icon,
@@ -340,7 +339,6 @@ interface TimelineRowSharedState {
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   onVisualizationFollowUp: ((prompt: string) => void) | undefined;
-  onEditUserMessage: ((messageId: MessageId) => void) | undefined;
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
@@ -508,8 +506,6 @@ interface MessagesTimelineProps {
   onRunShellCommand?: (command: string) => void;
   /** Puts a follow-up prompt from an inline visualization into the composer. */
   onVisualizationFollowUp?: (prompt: string) => void;
-  /** Takes a sent message back into the composer, stopping a running reply first. */
-  onEditUserMessage?: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -617,7 +613,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onSendAppMessage,
   onRunShellCommand,
   onVisualizationFollowUp,
-  onEditUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1374,7 +1369,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onRevertToTurnCount,
       onRunShellCommand,
       onVisualizationFollowUp,
-      onEditUserMessage,
       findActive,
       onImageExpand,
       onFileOpen,
@@ -1414,7 +1408,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onRevertToTurnCount,
       onRunShellCommand,
       onVisualizationFollowUp,
-      onEditUserMessage,
       findActive,
       onImageExpand,
       onFileOpen,
@@ -2629,7 +2622,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
-            {row.editable && <EditUserMessageButton messageId={row.message.id} />}
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
@@ -2745,7 +2737,7 @@ function RevertUserMessageButton({
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={activity.isRevertingCheckpoint}
             onClick={() => ctx.onRevertToTurnCount(turnCount, messageId)}
             aria-label="Edit from here"
           />
@@ -2754,34 +2746,6 @@ function RevertUserMessageButton({
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Edit from here</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function EditUserMessageButton({ messageId }: { messageId: MessageId }) {
-  const ctx = use(TimelineRowCtx);
-  const activity = use(TimelineRowActivityCtx);
-  const onEditUserMessage = ctx.onEditUserMessage;
-  if (!onEditUserMessage) return null;
-
-  // Enabled while the agent works: editing stops the reply first.
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={activity.isRevertingCheckpoint}
-            onClick={() => onEditUserMessage(messageId)}
-            aria-label="Edit message"
-          />
-        }
-      >
-        <PencilIcon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">Edit message</TooltipPopup>
     </Tooltip>
   );
 }

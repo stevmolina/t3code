@@ -1045,11 +1045,17 @@ export function inferCheckpointTurnCountByRunId(
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  /** The run still replying. Its message rewinds to the turns before it once Edit stops it. */
+  readonly activeRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
   const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  let turnsBeforeActiveRun = 0;
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.status === "ready") {
       readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+    }
+    if (checkpoint.runId !== input.activeRunId) {
+      turnsBeforeActiveRun = Math.max(turnsBeforeActiveRun, checkpoint.checkpointTurnCount);
     }
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
@@ -1060,7 +1066,12 @@ export function deriveRevertTurnCountByUserMessageId(input: {
     }
     if (entry.message.runId === null) continue;
     const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
+    if (checkpoint === undefined) {
+      if (entry.message.runId === input.activeRunId) {
+        byUserMessageId.set(entry.message.id, turnsBeforeActiveRun);
+      }
+      continue;
+    }
     byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
   }
   return byUserMessageId;

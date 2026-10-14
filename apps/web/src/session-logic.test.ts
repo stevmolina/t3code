@@ -301,6 +301,43 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
+  it("lets the message of a running reply rewind to the turns before it", () => {
+    const message = (id: string, runId: RunId): TimelineEntry => ({
+      id,
+      kind: "message",
+      createdAt: "2026-06-20T00:00:00.000Z",
+      message: {
+        id: MessageId.make(id),
+        role: "user",
+        text: id,
+        runId,
+        inputIntent: "turn_start",
+        streaming: false,
+        createdAt: "2026-06-20T00:00:00.000Z",
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      },
+    });
+    const done = RunId.make("run-done");
+    const active = RunId.make("run-active");
+    const targets = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [message("first", done), message("second", active)],
+      checkpoints: [
+        {
+          runId: done,
+          checkpointTurnCount: 1,
+          checkpointRef: "checkpoint-run-1" as never,
+          status: "capturing",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-06-20T00:00:03.000Z",
+        },
+      ],
+      activeRunId: active,
+    });
+
+    expect([...targets]).toEqual([[MessageId.make("second"), 1]]);
+  });
+
   it("uses visible turn item order and keeps provider errors in the work log", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");

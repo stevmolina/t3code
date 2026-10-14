@@ -1168,61 +1168,39 @@ export async function waitForRevertedMessage(
 }
 
 /**
- * Waits until a sent message can be edited: no run is active and the rollback
- * point just before the message's run is captured. Resolves with the turn count
- * to rewind to. Stopping a reply captures that point, so callers interrupt first
- * and pass `waitForCapture`; otherwise a missing point fails at once.
+ * Resolves once no run is active and the rollback point for `turnCount` is
+ * captured, so Edit from here can follow a reply it just stopped.
  */
-export async function waitForEditableMessage(
+export function waitForRollbackPoint(
   threadRef: ScopedThreadRef,
-  messageId: MessageId,
-  waitForCapture: boolean,
+  turnCount: number,
   timeoutMs = 30_000,
-): Promise<number> {
+): Promise<void> {
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
-  const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
-  const editableTurnCount = (): number | null => {
-    const thread = readProjection();
-    if (!thread) return null;
-    const runId = thread.messages.find((message) => message.id === messageId)?.runId;
-    const run = thread.runs.find((candidate) => candidate.id === runId);
-    if (!run) return null;
-    const busy = thread.runs.some(
-      (candidate) =>
-        candidate.status === "preparing" ||
-        candidate.status === "starting" ||
-        candidate.status === "running" ||
-        candidate.status === "waiting",
+  const ready = () => {
+    const thread = Option.getOrNull(appAtomRegistry.get(threadAtom).data);
+    if (!thread) return false;
+    const busy = thread.runs.some((run) =>
+      ["preparing", "starting", "running", "waiting"].includes(run.status),
     );
-    if (busy) return null;
-    const turnCount = run.ordinal - 1;
-    const target = thread.checkpoints.findLast((checkpoint) =>
+    const point = thread.checkpoints.findLast((checkpoint) =>
       turnCount === 0
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount,
     );
-    return target?.status === "ready" ? turnCount : null;
+    return !busy && point?.status === "ready";
   };
-  if (!readProjection()?.messages.some((message) => message.id === messageId)) {
-    throw new Error("The message to edit is no longer available.");
-  }
-  const ready = editableTurnCount();
-  if (ready !== null) return ready;
-  if (!waitForCapture) {
-    throw new Error("This message has no rollback point, so it cannot be edited.");
-  }
-  return new Promise<number>((resolve, reject) => {
-    let unsubscribe = () => {};
+  return new Promise<void>((resolve, reject) => {
+    if (ready()) return resolve();
     const timeout = globalThis.setTimeout(() => {
       unsubscribe();
-      reject(new Error("This message cannot be edited yet. Try again once the reply stops."));
+      reject(new Error("The reply did not stop in time. Try again once it stops."));
     }, timeoutMs);
-    unsubscribe = appAtomRegistry.subscribe(threadAtom, () => {
-      const turnCount = editableTurnCount();
-      if (turnCount === null) return;
+    const unsubscribe = appAtomRegistry.subscribe(threadAtom, () => {
+      if (!ready()) return;
       globalThis.clearTimeout(timeout);
       unsubscribe();
-      resolve(turnCount);
+      resolve();
     });
   });
 }

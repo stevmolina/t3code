@@ -83,8 +83,8 @@ import {
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
-  waitForEditableMessage,
   waitForRevertedMessage,
+  waitForRollbackPoint,
   prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
 
@@ -2182,73 +2182,31 @@ describe("waitForRevertedMessage", () => {
   });
 });
 
-describe("waitForEditableMessage", () => {
+describe("waitForRollbackPoint", () => {
   const threadRef = { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("t") };
-  const messageId = MessageId.make("message-2");
-  const run = (ordinal: number, status: string) => ({
-    id: RunId.make(`run-${ordinal}`),
-    ordinal,
-    status,
-  });
-  const checkpoint = (appRunOrdinal: number, status: string) => ({
-    appRunOrdinal,
-    ordinalWithinScope: appRunOrdinal,
-    status,
-  });
-
-  function projectionAtom(runs: ReadonlyArray<unknown>, checkpoints: ReadonlyArray<unknown>) {
-    const base = makeThreadProjectionFixture();
-    const projection = {
-      ...base,
-      messages: [{ id: messageId, runId: RunId.make("run-2"), role: "user" }],
-      runs,
-      checkpoints,
-    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
-    const state = Atom.make({ data: Option.some(projection) });
-    vi.spyOn(environmentThreadDetails, "stateAtom").mockReturnValue(state as never);
-    return { state, projection };
-  }
+  const run = (status: string) => ({ id: RunId.make("run-2"), ordinal: 2, status });
+  const checkpoint = (status: string) => ({ appRunOrdinal: 1, ordinalWithinScope: 1, status });
+  const projection = (runStatus: string, checkpointStatus: string) =>
+    Option.some({
+      ...makeThreadProjectionFixture(),
+      runs: [run(runStatus)],
+      checkpoints: [checkpoint(checkpointStatus)],
+    } as never);
 
   afterEach(() => vi.restoreAllMocks());
 
-  it("rewinds to the run before the message once its rollback point is ready", async () => {
-    projectionAtom([run(1, "completed"), run(2, "completed")], [checkpoint(1, "ready")]);
-    await expect(waitForEditableMessage(threadRef, messageId, false)).resolves.toBe(1);
-  });
-
-  it("fails at once when nothing is running and no rollback point exists", async () => {
-    projectionAtom([run(1, "failed"), run(2, "failed")], []);
-    await expect(waitForEditableMessage(threadRef, messageId, false)).rejects.toThrow(
-      "This message has no rollback point",
-    );
-  });
-
   it("waits for a stopped reply to settle and capture the rollback point", async () => {
-    const { state, projection } = projectionAtom(
-      [run(1, "completed"), run(2, "running")],
-      [checkpoint(1, "capturing")],
-    );
-    let resolved: number | undefined;
-    const waiting = waitForEditableMessage(threadRef, messageId, true).then((turnCount) => {
-      resolved = turnCount;
+    const state = Atom.make({ data: projection("running", "capturing") });
+    vi.spyOn(environmentThreadDetails, "stateAtom").mockReturnValue(state as never);
+    let settled = false;
+    const waiting = waitForRollbackPoint(threadRef, 1).then(() => {
+      settled = true;
     });
-    appAtomRegistry.set(state, {
-      data: Option.some({
-        ...projection,
-        runs: [run(1, "completed"), run(2, "running")],
-        checkpoints: [checkpoint(1, "ready")],
-      } as never),
-    });
+    appAtomRegistry.set(state, { data: projection("running", "ready") });
     await Promise.resolve();
-    expect(resolved).toBeUndefined();
-    appAtomRegistry.set(state, {
-      data: Option.some({
-        ...projection,
-        runs: [run(1, "completed"), run(2, "interrupted")],
-        checkpoints: [checkpoint(1, "ready")],
-      } as never),
-    });
+    expect(settled).toBe(false);
+    appAtomRegistry.set(state, { data: projection("interrupted", "ready") });
     await waiting;
-    expect(resolved).toBe(1);
+    expect(settled).toBe(true);
   });
 });
