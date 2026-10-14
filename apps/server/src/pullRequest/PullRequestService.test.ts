@@ -2696,63 +2696,52 @@ it.effect("prefers a matching checkout over a non-repository project's directory
   }),
 );
 
-it.effect(
-  "reads a linked PR through its clone inside a project folder that holds repositories",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-nested-checkout-" });
-      const apiClone = `${root}/projects/api`;
-      for (const checkout of [apiClone, `${root}/projects/web`, `${root}/node_modules/api`]) {
-        yield* fs.makeDirectory(`${checkout}/.git`, { recursive: true });
-      }
-      const identities = new Map([
-        [apiClone, project({ id: "x", title: "x", workspaceRoot: "/", repository: "acme/api" })],
-        [
-          `${root}/projects/web`,
-          project({ id: "y", title: "y", workspaceRoot: "/", repository: "acme/web" }),
-        ],
-        [
-          `${root}/node_modules/api`,
-          project({ id: "z", title: "z", workspaceRoot: "/", repository: "acme/api" }),
-        ],
-      ]);
-      const seen: string[] = [];
-      const service = yield* makeService({
-        projects: [
-          project({ id: "engagement", title: "Engagement", workspaceRoot: root }),
-          // Another repository on the same host, which the reference used to borrow.
-          project({
-            id: "other",
-            title: "Other",
-            workspaceRoot: "/other",
-            repository: "acme/other",
-          }),
-        ],
-        providers: [
-          fakeProvider(SourceControlProviderKind.make("github"), {
-            getChangeRequestSummary: (input) =>
-              Effect.sync(() => {
-                seen.push(input.cwd);
-                return changeRequest(7, "2026-07-02T00:00:00Z");
-              }),
-          }),
-        ],
-        resolveRepositoryIdentity: (cwd) =>
-          Effect.succeed(identities.get(cwd)?.repositoryIdentity ?? null),
-      });
-      const summary = yield* service.summary(
-        {
-          projectId: "engagement" as ProjectId,
-          host: "github.com",
-          repository: "acme/api",
-          number: 7,
-        },
-        { recoverTransientFailure: false },
-      );
-      assert.strictEqual(summary.projectId, "engagement");
-      assert.deepStrictEqual(seen, [apiClone]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+it.effect("reads a linked PR through its clone inside a project folder", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-nested-checkout-" });
+    const repositories = new Map([
+      [`${root}/projects/api`, "acme/api"],
+      [`${root}/projects/web`, "acme/web"],
+      [`${root}/node_modules/api`, "acme/api"],
+    ]);
+    for (const checkout of repositories.keys()) {
+      yield* fs.makeDirectory(`${checkout}/.git`, { recursive: true });
+    }
+    const seen: string[] = [];
+    const service = yield* makeService({
+      projects: [project({ id: "engagement", title: "Engagement", workspaceRoot: root })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: (input) =>
+            Effect.sync(() => {
+              seen.push(input.cwd);
+              return changeRequest(7, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+      resolveRepositoryIdentity: (cwd) => {
+        const repository = repositories.get(cwd);
+        return Effect.succeed(
+          repository === undefined
+            ? null
+            : (project({ id: "x", title: "x", workspaceRoot: cwd, repository })
+                .repositoryIdentity ?? null),
+        );
+      },
+    });
+    const summary = yield* service.summary(
+      {
+        projectId: "engagement" as ProjectId,
+        host: "github.com",
+        repository: "acme/api",
+        number: 7,
+      },
+      { recoverTransientFailure: false },
+    );
+    assert.strictEqual(summary.projectId, "engagement");
+    assert.deepStrictEqual(seen, [`${root}/projects/api`]);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("requires an explicit host for a non-repository project's linked PR", () =>

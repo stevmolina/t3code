@@ -1,21 +1,22 @@
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 
-/** Deep enough for `engagements/<client>/projects/<repo>` below a workspace folder. */
+/** Deep enough for `engagements/<client>/projects/<repo>` below a project folder. */
 const MAX_DEPTH = 4;
 /** Directories looked at before giving up, so a project rooted at a home folder stays cheap. */
 const MAX_DIRECTORIES = 2_000;
 
 /**
- * Git checkouts below `root`, nearest first. A project is often a folder that holds several
- * clones rather than a repository itself; this finds them so a pull request can be read from
- * the clone that owns it. Hidden folders and `node_modules` are skipped, and a checkout is not
+ * Git checkouts below `root`, nearest first, for a project that is a folder of clones rather
+ * than a repository. Hidden folders and `node_modules` are skipped, and checkouts are not
  * searched further.
  */
-export const findNestedCheckouts = Effect.fn("findNestedCheckouts")(function* (root: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+export const findNestedCheckouts = Effect.fn("findNestedCheckouts")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+) {
   const found: string[] = [];
   let frontier = [root];
   let visited = 0;
