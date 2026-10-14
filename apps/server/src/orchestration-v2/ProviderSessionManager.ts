@@ -7,7 +7,6 @@ import {
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -25,7 +24,6 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -45,13 +43,6 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
-import * as ServerConfig from "../config.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import {
-  expandVisualizeSkill,
-  mentionsVisualizeSkill,
-} from "../provider/builtinSkills/visualizeSkill.ts";
-import { hasProviderVisualizeSkill } from "@t3tools/shared/visualize";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -364,50 +355,6 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
-      // Optional like the services above; read only for the built-in Visualize skill.
-      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-      const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
-      const pathService = yield* Effect.serviceOption(Path.Path);
-
-      /**
-       * Inlines T3 Code's Visualize skill when the turn invokes `$visualize` and
-       * the provider has no skill of that name to resolve it natively. Fragments
-       * go under the attachments directory, which agents may already write to.
-       */
-      const withBuiltinVisualizeSkill = Effect.fn("withBuiltinVisualizeSkill")(function* (
-        input: ProviderAdapter.ProviderAdapterV2TurnInput,
-        instanceId: ProviderInstanceId,
-      ) {
-        if (
-          !mentionsVisualizeSkill(input.message.text) ||
-          Option.isNone(providerRegistry) ||
-          Option.isNone(serverConfig) ||
-          Option.isNone(pathService)
-        ) {
-          return input;
-        }
-        const providers = yield* providerRegistry.value.getProviders;
-        const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-        if (
-          provider === undefined ||
-          hasProviderVisualizeSkill(provider.skills) ||
-          (provider.workspaceSnapshots ?? []).some((snapshot) =>
-            hasProviderVisualizeSkill(snapshot.skills),
-          )
-        ) {
-          return input;
-        }
-        const outputDirectory = pathService.value.join(
-          serverConfig.value.attachmentsDir,
-          "visualizations",
-          input.threadId.replace(/[^A-Za-z0-9_-]/g, "_"),
-        );
-        yield* fileSystem.makeDirectory(outputDirectory, { recursive: true }).pipe(Effect.ignore);
-        const expanded = expandVisualizeSkill(input.message.text, outputDirectory);
-        return expanded.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS
-          ? { ...input, message: { ...input.message, text: expanded } }
-          : input;
-      });
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
@@ -1974,55 +1921,45 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          startTurn: (rawInput) =>
-            withBuiltinVisualizeSkill(rawInput, runtime.instanceId).pipe(
-              Effect.flatMap((input) =>
-                observeActivity(
+          startTurn: (input) =>
+            observeActivity(
+              providerSessionId,
+              ensureThreadAttached({
+                providerSessionId,
+                threadId: input.threadId,
+                providerInstanceId: runtime.instanceId,
+              }),
+            ).pipe(
+              // A start that fails or is stopped may never emit turn.terminal,
+              // so it clears its own turn or the session never goes idle. If
+              // the adapter emits the terminal anyway, clearing the same turn
+              // again changes nothing, so another thread's turn on a shared
+              // session stays busy either way.
+              Effect.andThen(
+                holdThreadLoaded({
                   providerSessionId,
-                  ensureThreadAttached({
+                  threadId: input.threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              Effect.andThen(
+                Effect.acquireUseRelease(
+                  observeActivity(
                     providerSessionId,
-                    threadId: input.threadId,
-                    providerInstanceId: runtime.instanceId,
-                  }),
-                ).pipe(
-                  // A start that fails or is stopped may never emit turn.terminal,
-                  // so it clears its own turn or the session never goes idle. If
-                  // the adapter emits the terminal anyway, clearing the same turn
-                  // again changes nothing, so another thread's turn on a shared
-                  // session stays busy either way.
-                  Effect.andThen(
-                    holdThreadLoaded({
+                    markBusy(
                       providerSessionId,
-                      threadId: input.threadId,
-                      providerThread: input.providerThread,
-                    }),
-                  ),
-                  Effect.andThen(
-                    Effect.acquireUseRelease(
-                      observeActivity(
-                        providerSessionId,
-                        markBusy(
-                          providerSessionId,
-                          busyTurnKey(input.providerThread.id, input.runOrdinal),
-                        ),
-                      ),
-                      () =>
-                        runtime
-                          .startTurn(input)
-                          .pipe(turnMetrics("send", input.modelSelection.model)),
-                      (_, exit) =>
-                        Exit.isFailure(exit)
-                          ? observeActivity(
-                              providerSessionId,
-                              markIdle(
-                                providerSessionId,
-                                input.providerThread.id,
-                                input.runOrdinal,
-                              ),
-                            )
-                          : Effect.void,
+                      busyTurnKey(input.providerThread.id, input.runOrdinal),
                     ),
                   ),
+                  () =>
+                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                  (_, exit) =>
+                    Exit.isFailure(exit)
+                      ? observeActivity(
+                          providerSessionId,
+                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                        )
+                      : Effect.void,
                 ),
               ),
             ),

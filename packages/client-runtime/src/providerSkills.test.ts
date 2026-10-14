@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { describe, expect, it } from "vite-plus/test";
-import { BUILTIN_VISUALIZE_SKILL } from "@t3tools/shared/visualize";
 
 import {
   dedupeProviderSkillsByName,
@@ -249,7 +248,6 @@ describe("workspace provider snapshots", () => {
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
       { name: "project", path: "/workspace/project-a/SKILL.md", enabled: true },
-      BUILTIN_VISUALIZE_SKILL,
     ]);
     expect(resolveProviderSlashCommandsForCwd(provider, "/workspace/project-a")).toEqual([
       { name: "project" },
@@ -257,28 +255,8 @@ describe("workspace provider snapshots", () => {
   });
 
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
-    expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual([
-      ...provider.skills,
-      BUILTIN_VISUALIZE_SKILL,
-    ]);
+    expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
-  });
-
-  it("offers the built-in Visualize skill only when the provider has none", () => {
-    const nativeVisualize = {
-      name: "visualize",
-      path: "/home/me/.codex/plugins/cache/openai-bundled/visualize/1.0.0/skills/visualize/SKILL.md",
-      enabled: true,
-    };
-    const withNative = { ...provider, skills: [nativeVisualize], workspaceSnapshots: [] };
-    expect(resolveProviderSkillsForCwd(withNative, null)).toEqual([nativeVisualize]);
-    const pluginVisualize = { ...nativeVisualize, name: "visualize:visualize" };
-    const withPlugin = { ...provider, skills: [pluginVisualize], workspaceSnapshots: [] };
-    expect(resolveProviderSkillsForCwd(withPlugin, null)).toEqual([pluginVisualize]);
-    expect(resolveProviderSkillsForCwd(provider, null)).toBe(
-      resolveProviderSkillsForCwd(provider, null),
-    );
-    expect(resolveProviderSkillSourceKind(BUILTIN_VISUALIZE_SKILL)).toBe("app");
   });
 
   it("uses partial workspace skills and commands while keeping discovery retryable", () => {
@@ -290,10 +268,9 @@ describe("workspace provider snapshots", () => {
         slashCommandsPending: true,
       })),
     } satisfies ServerProvider;
-    expect(resolveProviderSkillsForCwd(partial, "/workspace/project-a")).toEqual([
-      ...(provider.workspaceSnapshots[0]?.skills ?? []),
-      BUILTIN_VISUALIZE_SKILL,
-    ]);
+    expect(resolveProviderSkillsForCwd(partial, "/workspace/project-a")).toEqual(
+      provider.workspaceSnapshots[0]?.skills,
+    );
     expect(resolveProviderSlashCommandsForCwd(partial, "/workspace/project-a")).toEqual([
       { name: "compact" },
     ]);

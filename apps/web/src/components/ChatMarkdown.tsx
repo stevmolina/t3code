@@ -28,7 +28,6 @@ import {
 import {
   ChevronRightIcon,
   CodeIcon,
-  EyeIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
   GlobeIcon,
@@ -36,7 +35,6 @@ import {
   InfoIcon,
   LightbulbIcon,
   MailIcon,
-  Maximize2Icon,
   MessageSquareIcon,
   MessageSquareWarningIcon,
   OctagonAlertIcon,
@@ -107,12 +105,6 @@ import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
-import {
-  fenceVisualizeCitations,
-  parseVisualizeCitation,
-  VISUALIZE_CITATION_FENCE_LANGUAGE,
-  type VisualizeCitation,
-} from "@t3tools/shared/visualize";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -223,7 +215,6 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
-import { VisualizationDialog, VisualizationFrame } from "./VisualizationFrame";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -259,10 +250,6 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
-  /** Render Visualize references as live pages. Agent output only; never user text. */
-  renderVisualizations?: boolean | undefined;
-  /** Receives a follow-up prompt a visualization asks to send. */
-  onVisualizationFollowUp?: ((prompt: string) => void) | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -1115,104 +1102,6 @@ function MarkdownMermaidCodeBlock({
         children
       )}
     </MarkdownCodeBlock>
-  );
-}
-
-/**
- * A Visualize reference renders as its live page once the response settles;
- * streaming, the code toggle, and a file the server cannot serve keep the
- * highlighted reference source.
- */
-function MarkdownVisualizationCodeBlock({
-  code,
-  citation,
-  theme,
-  isStreaming,
-  children,
-}: {
-  code: string;
-  citation: VisualizeCitation;
-  theme: "light" | "dark";
-  isStreaming: boolean;
-  children: ReactNode;
-}) {
-  const [showCode, setShowCode] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const showPage = !showCode && !isStreaming;
-  const toggleLabel = showCode ? "Show visualization" : "Show code";
-  const title = citation.title ?? "Visualization";
-  return (
-    <div data-visualize={showPage ? "page" : "source"}>
-      <MarkdownCodeBlock
-        code={code}
-        language={VISUALIZE_CITATION_FENCE_LANGUAGE}
-        fenceTitle={title}
-        theme={theme}
-        isStreaming={isStreaming}
-        canWrap={!showPage}
-        diagram={showPage}
-        viewToggle={
-          isStreaming ? null : (
-            <span className="flex items-center gap-0.5">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost-muted"
-                      size="icon-xs"
-                      onClick={() => setShowCode((value) => !value)}
-                      aria-label={toggleLabel}
-                    />
-                  }
-                >
-                  {showCode ? <EyeIcon className="size-3" /> : <CodeIcon className="size-3" />}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{toggleLabel}</TooltipPopup>
-              </Tooltip>
-              {showPage && citation.mode === "wide" ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost-muted"
-                        size="icon-xs"
-                        onClick={() => setExpanded(true)}
-                        aria-label="Expand visualization"
-                      />
-                    }
-                  >
-                    <Maximize2Icon className="size-3" />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">Expand visualization</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
-          )
-        }
-      >
-        {showPage ? (
-          <ChatMarkdownVisualization
-            key={code}
-            citation={citation}
-            theme={theme}
-            onUnavailable={() => setShowCode(true)}
-          />
-        ) : (
-          children
-        )}
-      </MarkdownCodeBlock>
-      {expanded && showPage ? (
-        <VisualizationDialog title={title} onClose={() => setExpanded(false)}>
-          <ChatMarkdownVisualization
-            citation={citation}
-            theme={theme}
-            onUnavailable={() => setExpanded(false)}
-          />
-        </VisualizationDialog>
-      ) : null}
-    </div>
   );
 }
 
@@ -2461,8 +2350,6 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
-  renderVisualizations = false,
-  onVisualizationFollowUp,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2880,14 +2767,12 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
-      onVisualizationFollowUp,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
       linkedThreadPullRequestFor,
-      renderVisualizations,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2915,14 +2800,12 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
-      onVisualizationFollowUp,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
       linkedThreadPullRequestFor,
-      renderVisualizations,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2945,40 +2828,6 @@ function useChatMarkdownState({
 const ChatMarkdownRendererContext = React.createContext<
   ReturnType<typeof useChatMarkdownState>["componentState"]
 >(null!);
-
-/** A Visualize reference's live page, scoped to the message's environment and thread. */
-function ChatMarkdownVisualization(props: {
-  citation: VisualizeCitation;
-  theme: "light" | "dark";
-  onUnavailable: () => void;
-}) {
-  const { environmentId, threadRef, onVisualizationFollowUp, openDeferredMarkdownLink } = use(
-    ChatMarkdownRendererContext,
-  );
-  const { onUnavailable } = props;
-  const missingEnvironment = environmentId === null;
-  useEffect(() => {
-    if (missingEnvironment) onUnavailable();
-  }, [missingEnvironment, onUnavailable]);
-  const openLink = useCallback(
-    (url: string) => {
-      void openDeferredMarkdownLink(url).catch(() => undefined);
-    },
-    [openDeferredMarkdownLink],
-  );
-  if (environmentId === null) return null;
-  return (
-    <VisualizationFrame
-      citation={props.citation}
-      environmentId={environmentId}
-      threadId={threadRef?.threadId ?? null}
-      theme={props.theme}
-      onUnavailable={onUnavailable}
-      onFollowUp={onVisualizationFollowUp}
-      onOpenLink={openLink}
-    />
-  );
-}
 
 // Screen readers take a heading's level from its tag, which would let a `#` in a
 // message outrank the heading placed above it. Override only the exposed level:
@@ -3551,15 +3400,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const {
-      resolvedTheme,
-      diffThemeName,
-      expandMedia,
-      isStreaming,
-      onRunShellCommand,
-      renderVisualizations,
-      text,
-    } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
+      ChatMarkdownRendererContext,
+    );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3603,22 +3446,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </MarkdownMermaidCodeBlock>
       );
     }
-    const visualization =
-      renderVisualizations && language === VISUALIZE_CITATION_FENCE_LANGUAGE
-        ? parseVisualizeCitation(codeBlock.code)
-        : null;
-    if (visualization) {
-      return (
-        <MarkdownVisualizationCodeBlock
-          code={codeBlock.code}
-          citation={visualization}
-          theme={resolvedTheme}
-          isStreaming={isStreaming}
-        >
-          {highlightedCode}
-        </MarkdownVisualizationCodeBlock>
-      );
-    }
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
@@ -3639,20 +3466,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
 } satisfies Components;
 
 function ChatMarkdown({
-  text: sourceText,
+  text,
   className,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
-  renderVisualizations = false,
   ...props
 }: ChatMarkdownProps) {
-  // Each reference line becomes its own fence, so the JSON survives Markdown
-  // parsing and the code block renderer can swap it for the page.
-  const text = useMemo(
-    () => (renderVisualizations ? fenceVisualizeCitations(sourceText) : sourceText),
-    [renderVisualizations, sourceText],
-  );
   const {
     componentState,
     handleCopy,
@@ -3660,7 +3480,7 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, renderVisualizations, ...props });
+  } = useChatMarkdownState({ text, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&

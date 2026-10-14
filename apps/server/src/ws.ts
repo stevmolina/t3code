@@ -2741,8 +2741,6 @@ const layerWsRpc = (
               input.resource._tag === "tool-output-image" ||
               // GitHub media names the repository it authenticates through itself.
               input.resource._tag === "github-media" ||
-              // A visualization reference always names an absolute host path.
-              input.resource._tag === "visualization" ||
               (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
             ) {
               return yield* issueAssetUrl({ resource: input.resource });

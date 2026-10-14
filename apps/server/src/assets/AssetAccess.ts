@@ -64,10 +64,6 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
-import {
-  checkVisualizationFragment,
-  VISUALIZATION_MAX_FRAGMENT_BYTES,
-} from "./visualization/VisualizationDocument.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -158,12 +154,6 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
-    kind: Schema.Literal("visualization"),
-    filePath: Schema.String,
-    expiresAt: Schema.Number,
-  }),
-  Schema.Struct({
-    version: Schema.Literal(1),
     kind: Schema.Literal("tool-output-image"),
     threadId: ThreadId,
     itemId: TurnItemId,
@@ -194,10 +184,6 @@ export type ResolvedAsset =
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
       readonly renderIntent?: "mcp-app";
-    }
-  | {
-      readonly kind: "visualization";
-      readonly path: string;
     }
   | {
       readonly kind: "bytes";
@@ -428,62 +414,6 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       },
       fileName: path.basename(canonicalFile),
       imageDimensions: opened.dimensions,
-    };
-  },
-);
-
-/**
- * Reads a cited visualization fragment and confirms it is one. Missing,
- * oversized, binary, or full-document files are refused, so the client falls
- * back to showing the reference source.
- */
-export const readVisualizationFragment = Effect.fn("AssetAccess.readVisualizationFragment")(
-  function* (filePath: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    // Only the canonical path was granted; a symlink swapped in later is refused.
-    if ((yield* resolveCanonicalFile(filePath)) !== filePath) return null;
-    const info = yield* optionOnNotFound(fileSystem.stat(filePath));
-    if (
-      Option.isNone(info) ||
-      info.value.type !== "File" ||
-      info.value.size > BigInt(VISUALIZATION_MAX_FRAGMENT_BYTES)
-    ) {
-      return null;
-    }
-    const bytes = yield* fileSystem.readFile(filePath);
-    return checkVisualizationFragment(bytes).ok ? new TextDecoder().decode(bytes) : null;
-  },
-);
-
-const finalizeVisualizationAsset = Effect.fn("AssetAccess.finalizeVisualizationAsset")(
-  function* (input: { readonly resource: AssetResource; readonly expiresAt: number }) {
-    const path = yield* Path.Path;
-    const requestedPath = input.resource._tag === "visualization" ? input.resource.path : "";
-    if (!path.isAbsolute(requestedPath) || !/\.html?$/i.test(requestedPath)) {
-      return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
-    }
-    const inspectionError = (cause: unknown) =>
-      new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause });
-    const canonicalFile = yield* resolveCanonicalFile(requestedPath).pipe(
-      Effect.mapError(inspectionError),
-    );
-    if (!canonicalFile) {
-      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
-    }
-    const fragment = yield* readVisualizationFragment(canonicalFile).pipe(
-      Effect.mapError(inspectionError),
-    );
-    if (fragment === null) {
-      return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
-    }
-    return {
-      claims: {
-        version: 1 as const,
-        kind: "visualization" as const,
-        filePath: canonicalFile,
-        expiresAt: input.expiresAt,
-      },
-      fileName: path.basename(canonicalFile),
     };
   },
 );
@@ -861,15 +791,6 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
-    case "visualization": {
-      const finalized = yield* finalizeVisualizationAsset({
-        resource: input.resource,
-        expiresAt,
-      });
-      claims = finalized.claims;
-      fileName = finalized.fileName;
-      break;
-    }
     case "github-media": {
       const fetchUrl = githubMediaFetchUrl(input.resource.url);
       if (fetchUrl === null) {
@@ -991,12 +912,6 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       cwd: claims.cwd,
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
-  }
-
-  if (claims.kind === "visualization") {
-    // The route rereads the file: the agent may rewrite it in place, and a
-    // vanished file still needs a page that tells the host to fall back.
-    return { kind: "visualization", path: claims.filePath } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "tool-output-image") {

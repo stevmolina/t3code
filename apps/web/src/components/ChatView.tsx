@@ -4796,23 +4796,6 @@ export default function ChatView(props: ChatViewProps) {
     queuedEditDraftTargetFor,
     serverProjection,
   ]);
-  // A visualization's follow-up lands in the composer; the user sends it.
-  const draftVisualizationFollowUp = useCallback(
-    (prompt: string) => {
-      const composer = composerRef.current;
-      if (!composer) return;
-      if (!composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add to chat",
-          description: "The composer is busy; try again once it is ready.",
-        });
-        return;
-      }
-      scheduleComposerFocus();
-    },
-    [composerRef, scheduleComposerFocus],
-  );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
@@ -8514,7 +8497,10 @@ export default function ChatView(props: ChatViewProps) {
   // Rollback target for the pending revert dialog: turnCount is the target run ordinal
   // (see deriveRevertTurnCountByUserMessageId: checkpointTurnCount - 1). Missing
   // checkpoints hold no file snapshot so only conversation-only rewind may target them.
-  const pendingRevertTarget = pendingRevert === null ? undefined : resolvePendingRevertTarget(turnDiffSummaries, pendingRevert.turnCount);
+  const pendingRevertTarget =
+    pendingRevert === null
+      ? undefined
+      : resolvePendingRevertTarget(turnDiffSummaries, pendingRevert.turnCount);
 
   const onRevertToTurnCount = useCallback(
     async (turnCount: number, messageId: MessageId, restoreFiles?: boolean) => {
@@ -11597,7 +11583,6 @@ export default function ChatView(props: ChatViewProps) {
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantText,
-                      onVisualizationFollowUp: draftVisualizationFollowUp,
                       ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                     }
                   : {})}
@@ -12265,7 +12250,11 @@ export default function ChatView(props: ChatViewProps) {
             <Button
               variant="destructive"
               disabled={isRevertFilesDisabled(pendingRevertTarget)}
-              title={isRevertFilesDisabled(pendingRevertTarget) ? "No file snapshot for this checkpoint." : undefined}
+              title={
+                isRevertFilesDisabled(pendingRevertTarget)
+                  ? "No file snapshot for this checkpoint."
+                  : undefined
+              }
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
                 setPendingRevert(null);

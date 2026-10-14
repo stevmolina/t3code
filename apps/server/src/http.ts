@@ -29,17 +29,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
-import {
-  ASSET_ROUTE_PREFIX,
-  readMcpAppHtml,
-  readVisualizationFragment,
-  resolveAsset,
-} from "./assets/AssetAccess.ts";
-import {
-  renderVisualizationDocument,
-  VISUALIZATION_CONTENT_SECURITY_POLICY,
-  VISUALIZATION_UNAVAILABLE_DOCUMENT,
-} from "./assets/visualization/VisualizationDocument.ts";
+import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -264,30 +254,6 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
-/** An inline visualization page: the cited fragment wrapped in the frame runtime. */
-const visualizationResponse = Effect.fn("visualizationResponse")(function* (filePath: string) {
-  const fragment = yield* readVisualizationFragment(filePath).pipe(
-    Effect.tapError((cause) =>
-      Effect.logWarning("Failed to read visualization fragment.", { filePath, cause }),
-    ),
-    Effect.orElseSucceed(() => null),
-  );
-  return HttpServerResponse.text(
-    fragment === null ? VISUALIZATION_UNAVAILABLE_DOCUMENT : renderVisualizationDocument(fragment),
-    {
-      status: 200,
-      contentType: "text/html; charset=utf-8",
-      headers: {
-        // The agent can rewrite the fragment; every load reads the current file.
-        "Cache-Control": "private, no-store",
-        "Content-Security-Policy": VISUALIZATION_CONTENT_SECURITY_POLICY,
-        "Referrer-Policy": "no-referrer",
-        "X-Content-Type-Options": "nosniff",
-      },
-    },
-  );
-});
-
 export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });
@@ -471,9 +437,6 @@ export const layerAssetRoute = HttpRouter.add(
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
-    }
-    if (asset.kind === "visualization") {
-      return yield* visualizationResponse(asset.path);
     }
     if (asset.kind === "bytes") {
       return HttpServerResponse.uint8Array(asset.bytes, {

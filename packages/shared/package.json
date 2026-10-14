@@ -255,10 +255,6 @@
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"
     },
-    "./visualize": {
-      "types": "./src/visualize.ts",
-      "import": "./src/visualize.ts"
-    },
     "./promptLinks": {
       "types": "./src/promptLinks.ts",
       "import": "./src/promptLinks.ts"

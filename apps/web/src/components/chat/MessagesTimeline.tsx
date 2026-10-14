@@ -338,7 +338,6 @@ interface TimelineRowSharedState {
    */
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
-  onVisualizationFollowUp: ((prompt: string) => void) | undefined;
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
@@ -504,8 +503,6 @@ interface MessagesTimelineProps {
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
   onRunShellCommand?: (command: string) => void;
-  /** Puts a follow-up prompt from an inline visualization into the composer. */
-  onVisualizationFollowUp?: (prompt: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -612,7 +609,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onSendAppMessage,
   onRunShellCommand,
-  onVisualizationFollowUp,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1368,7 +1364,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onRunShellCommand,
-      onVisualizationFollowUp,
       findActive,
       onImageExpand,
       onFileOpen,
@@ -1407,7 +1402,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onRunShellCommand,
-      onVisualizationFollowUp,
       findActive,
       onImageExpand,
       onFileOpen,
@@ -2862,7 +2856,6 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
               onUseArtifactTemplate={ctx.onUseArtifactTemplate}
               onRunShellCommand={ctx.onRunShellCommand}
-              onVisualizationFollowUp={ctx.onVisualizationFollowUp}
               onImageExpand={ctx.onImageExpand}
             />
           </AssistantCitationSource>
