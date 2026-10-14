@@ -17,8 +17,8 @@ import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS as SHARED_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS as SHARED_REMARK_PLUGINS_WITH_BREAKS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS as SHARED_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MATH_CLASS,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -118,9 +118,7 @@ import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { remarkChatMath } from "../markdown-math";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize from "rehype-sanitize";
+import { remarkChatMath } from "@t3tools/shared/markdownMath";
 import {
   artifactTemplateFromHastProperties,
   renderCodexInlineDirectivesAsMarkdown,
@@ -425,85 +423,14 @@ function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
 
-type MarkdownMathHastNode = {
-  type?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: MarkdownMathHastNode[];
-};
-
-const CHAT_MARKDOWN_REMARK_PLUGINS = [
-  ...SHARED_REMARK_PLUGINS.slice(0, 1),
+// Chat math registers right after GFM.
+const withMath = (plugins: typeof SHARED_REMARK_PLUGINS) => [
+  ...plugins.slice(0, 1),
   remarkChatMath,
-  ...SHARED_REMARK_PLUGINS.slice(1),
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-
-const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
-  ...SHARED_REMARK_PLUGINS_WITH_BREAKS.slice(0, 1),
-  remarkChatMath,
-  ...SHARED_REMARK_PLUGINS_WITH_BREAKS.slice(1),
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-
-/** Parse raw HTML while reserving math rendering and copy metadata for parser-owned nodes. */
-function rehypeRawMath() {
-  const parseRaw = rehypeRaw({ passThrough: ["chatMath"] });
-  return (...[tree, file]: Parameters<typeof parseRaw>) => {
-    /** Carry parsed math through HTML processing using a node type HTML cannot create. */
-    const protect = (node: MarkdownMathHastNode) => {
-      if (
-        node.type === "element" &&
-        node.tagName === "code" &&
-        typeof node.properties?.dataMathSource === "string"
-      ) {
-        // Raw HTML can create elements and attributes, but not this AST node type.
-        node.type = "chatMath";
-      }
-      node.children?.forEach(protect);
-    };
-    protect(tree);
-    const parsed = parseRaw(tree, file);
-    /** Restore parsed math and remove math metadata supplied by raw HTML. */
-    const restore = (node: MarkdownMathHastNode) => {
-      if (node.type === "chatMath") {
-        node.type = "element";
-      } else if (node.type === "element" && node.properties) {
-        delete node.properties.dataMathSource;
-        const classes = node.properties.className;
-        if (Array.isArray(classes)) {
-          node.properties.className = classes.filter(
-            (name) => name !== "math-inline" && name !== "math-display",
-          );
-        }
-      }
-      node.children?.forEach(restore);
-    };
-    restore(parsed);
-    return parsed;
-  };
-}
-
-const CHAT_MARKDOWN_REHYPE_PLUGINS = SHARED_REHYPE_PLUGINS.map((plugin) => {
-  if (plugin === rehypeRaw) return rehypeRawMath;
-  if (Array.isArray(plugin) && plugin[0] === rehypeSanitize) {
-    return [
-      rehypeSanitize,
-      {
-        ...CHAT_MARKDOWN_SANITIZE_SCHEMA,
-        attributes: {
-          ...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes,
-          code: [
-            ...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes.code.filter(
-              (attribute) => !Array.isArray(attribute) || attribute[0] !== "className",
-            ),
-            ["className", /^language-./, "math-inline", "math-display"],
-            "dataMathSource",
-          ],
-        },
-      },
-    ];
-  }
-  return plugin;
-}) satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+  ...plugins.slice(1),
+];
+const CHAT_MARKDOWN_REMARK_PLUGINS = withMath(SHARED_REMARK_PLUGINS);
+const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = withMath(SHARED_REMARK_PLUGINS_WITH_BREAKS);
 
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
@@ -1224,7 +1151,7 @@ function MarkdownVisualizationCodeBlock({
         isStreaming={isStreaming}
         canWrap={!showPage}
         diagram={showPage}
-        leadingActions={
+        viewToggle={
           isStreaming ? null : (
             <span className="flex items-center gap-0.5">
               <Tooltip>
@@ -3448,15 +3375,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
       ChatMarkdownRendererContext,
     );
     const classes = className?.split(/\s+/);
-    const displayMath = classes?.includes("math-display") === true;
-    if (displayMath || classes?.includes("math-inline")) {
+    if (classes?.includes(CHAT_MATH_CLASS)) {
+      const displayMath = classes.includes("math-display");
       const math = nodeToPlainText(children);
-      const source =
-        typeof node?.properties.dataMathSource === "string"
-          ? node.properties.dataMathSource
-          : displayMath
-            ? `$$\n${math}\n$$`
-            : `$${math}$`;
+      // Only the parser sets the math class, and it always records the authored source.
+      const source = String(node?.properties.dataMathSource ?? math);
       const fallback = (
         <code
           className={displayMath ? "chat-markdown-math-display" : "chat-markdown-math-inline"}

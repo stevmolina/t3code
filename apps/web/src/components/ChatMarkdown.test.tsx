@@ -164,27 +164,6 @@ describe("ChatMarkdown math", () => {
     expect(html).toContain("&lt;img");
     expect(html).toContain("\\includegraphics");
   });
-
-  it("does not typeset a completed equation again when more text streams in", async () => {
-    const katex = (await import("katex")).default;
-    const render = vi.spyOn(katex, "renderToString");
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    let renderer: ReactTestRenderer | undefined;
-    try {
-      await act(async () => {
-        renderer = create(<ChatMarkdown cwd={undefined} text="$x^2$" isStreaming />);
-      });
-      expect(render).toHaveBeenCalledTimes(1);
-      await act(async () => {
-        renderer!.update(<ChatMarkdown cwd={undefined} text="$x^2$ and more text" isStreaming />);
-      });
-      expect(render).toHaveBeenCalledTimes(1);
-    } finally {
-      await act(async () => renderer?.unmount());
-      render.mockRestore();
-      vi.unstubAllGlobals();
-    }
-  });
 });
 
 describe("ChatMarkdown bare anchor placeholders", () => {

@@ -251,6 +251,10 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./markdownMath": {
+      "types": "./src/markdownMath.ts",
+      "import": "./src/markdownMath.ts"
+    },
     "./visualize": {
       "types": "./src/visualize.ts",
       "import": "./src/visualize.ts"
@@ -509,6 +513,7 @@
     "rehype-sanitize": "catalog:",
     "remark-breaks": "catalog:",
     "remark-gfm": "catalog:",
+    "remark-math": "^6.0.0",
     "remark-parse": "catalog:",
     "remark-rehype": "catalog:",
     "unified": "catalog:",
@@ -517,7 +522,9 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@types/mdast": "^4.0.4",
     "@types/node": "catalog:",
+    "micromark-extension-math": "^3.1.0",
     "micromark-util-types": "catalog:",
     "vite-plus": "catalog:"
   }

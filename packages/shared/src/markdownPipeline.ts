@@ -140,12 +140,22 @@ function rehypePreserveImageSourceMeta() {
   };
 }
 
-export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
+/** Marks parser-made math. Random per load, so raw HTML in a message cannot claim it. */
+export const CHAT_MATH_CLASS = `math-${crypto.getRandomValues(new Uint32Array(2)).join("")}`;
+
+const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      // The first className rule wins, so math classes join the default language rule.
+      ["className", /^language-./, CHAT_MATH_CLASS, "math-display"],
+      ...(defaultSchema.attributes?.code ?? []),
+      "dataCodeMeta",
+      "dataInlineCode",
+      "dataMathSource",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],

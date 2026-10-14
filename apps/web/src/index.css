@@ -1775,25 +1775,19 @@ code {
   margin-bottom: 0;
 }
 
-/* Inline math keeps the default flow. The class is the hook the clipboard
-   uses to copy the whole TeX source instead of KaTeX's duplicated glyphs. */
-.chat-markdown-math-inline {
-  display: inline;
-}
-
+/* The math classes also mark where the clipboard copies a formula's TeX source. */
 .chat-markdown-math-display {
   display: block;
-  max-width: 100%;
   margin-block: 0.75rem;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-block: 0.25rem;
 }
 
 .chat-markdown-math-display .katex-display {
   margin: 0;
 }
 
+/* Wide formulas scroll from their first glyph instead of centering out of view. */
 .chat-markdown-math-display .katex-display > .katex {
   width: max-content;
   min-width: 100%;

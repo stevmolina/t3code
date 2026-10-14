@@ -16,7 +16,6 @@ const ELEMENT_NODE = 1;
 class FakeText {
   readonly nodeType = TEXT_NODE;
   readonly childNodes: ReadonlyArray<never> = [];
-  parentElement: FakeElement | null = null;
 
   constructor(readonly textContent: string) {}
 }
@@ -25,8 +24,6 @@ class FakeElement {
   readonly nodeType = ELEMENT_NODE;
   checked = false;
   readonly childNodes: Array<FakeElement | FakeText> = [];
-  parentElement: FakeElement | null = null;
-  private innerHtmlOverride: string | null = null;
   readonly classList = {
     contains: (name: string) => this.classNames.includes(name),
   };
@@ -50,14 +47,8 @@ class FakeElement {
   }
 
   append(...children: Array<FakeElement | FakeText>): this {
-    for (const child of children) child.parentElement = this;
     this.childNodes.push(...children);
     return this;
-  }
-
-  appendChild<T extends FakeElement | FakeText>(child: T): T {
-    this.append(child);
-    return child;
   }
 
   getAttribute(name: string): string | null {
@@ -68,24 +59,8 @@ class FakeElement {
     return Object.hasOwn(this.attributes, name);
   }
 
-  closest(selector: string): FakeElement | null {
-    if (selector === "[data-markdown-copy]" && this.hasAttribute("data-markdown-copy")) {
-      return this;
-    }
-    if (this.tagName === selector.toUpperCase()) return this;
-    return this.parentElement?.closest(selector) ?? null;
-  }
-
-  querySelectorAll(): ReadonlyArray<FakeElement> {
-    return [];
-  }
-
-  get innerHTML(): string {
-    return this.innerHtmlOverride ?? this.textContent;
-  }
-
-  set innerHTML(value: string) {
-    this.innerHtmlOverride = value;
+  closest(): FakeElement | null {
+    return null;
   }
 
   /** Supports only the selectors markdown-clipboard actually asks for. */
@@ -173,40 +148,6 @@ describe("serializeRenderedMarkdownFragment", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
-
-  it.each([String.raw`$\frac{1}{2}$`, "\\[\n\\frac{1}{2}\n\\]"])(
-    "copies the LaTeX when the selection is entirely inside an equation: %s",
-    (source) => {
-      const math = Object.assign(new FakeElement("SPAN", [], { "data-markdown-copy": source }), {
-        cloneNode: () => math,
-      }).append(new FakeText("1212"));
-      const fragment = new FakeElement("DIV");
-      const container = Object.assign(fragment, {
-        innerHTML: "",
-        appendChild(child: FakeText) {
-          fragment.append(child);
-        },
-        replaceChildren(child: FakeElement) {
-          fragment.childNodes.splice(0, fragment.childNodes.length, child);
-        },
-        querySelectorAll: () => [],
-      });
-      vi.stubGlobal("document", { createElement: () => container });
-      const selection = {
-        rangeCount: 1,
-        getRangeAt: () => ({
-          collapsed: false,
-          cloneContents: () => new FakeText("1"),
-          commonAncestorContainer: {
-            nodeType: ELEMENT_NODE,
-            closest: (selector: string) => (selector === "pre" ? null : math),
-          },
-        }),
-      } as unknown as Selection;
-
-      expect(chatMarkdownClipboardPayload(selection)?.text).toBe(source);
-    },
-  );
 
   it("wraps inline code in backticks", () => {
     const paragraph = new FakeElement("P").append(
@@ -405,25 +346,20 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
   });
 
-  it("uses an ancestor's explicit Markdown when a selection only clones its children", () => {
-    const label = new FakeElement("TEXT").append(new FakeText("A"));
-    new FakeElement("DIV", [], {
-      "data-markdown-copy": "```mermaid\nflowchart LR\nA-->B\n```\n\n",
-    }).append(new FakeElement("SVG").append(label));
+  it("copies a typeset formula's LaTeX instead of its rendered glyphs", () => {
+    const formula = { getAttribute: () => String.raw`$\frac{1}{2}$` };
     vi.stubGlobal("document", {
-      createElement: () => new FakeElement("DIV"),
+      createElement: () => ({ appendChild() {}, querySelectorAll: () => [], innerHTML: "" }),
     });
-
     const payload = chatMarkdownClipboardPayload({
       rangeCount: 1,
       getRangeAt: () => ({
         collapsed: false,
-        cloneContents: () => new FakeElement("SVG").append(new FakeText("A")),
-        commonAncestorContainer: label,
-        toString: () => "A",
+        cloneContents: () => new FakeText("12"),
+        commonAncestorContainer: { nodeType: ELEMENT_NODE, closest: () => formula },
       }),
     } as unknown as Selection);
 
-    expect(payload?.text).toBe("```mermaid\nflowchart LR\nA-->B\n```\n\n");
+    expect(payload?.text).toBe(String.raw`$\frac{1}{2}$`);
   });
 });

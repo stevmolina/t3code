@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { remarkCodexDirectives } from "@t3tools/shared/codexMarkdownDirectives";
 import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
+import { remarkChatMath } from "@t3tools/shared/markdownMath";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
 import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
 
@@ -31,6 +32,7 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
         observeParsing,
         capture,
         remarkGfm,
+        remarkChatMath,
         remarkGithubAlerts,
         remarkNormalizeListItemIndentation,
         remarkCodexDirectives,
@@ -74,6 +76,7 @@ describe("incremental Markdown parsing", () => {
     "text <https://example.com> *bold*",
     "> [!NOTE]\n> alert\n\n- [ ] task",
     "\uFEFFtext after a byte-order mark",
+    "Inline \\(\\frac{x}{2}\\) and $y$.\n\n\\[\n\\begin{aligned}a &= b \\\\\nc &= d\\end{aligned}\n\\]",
   ])("preserves the parse tree, positions, and HTML while streaming %j", (tail) => {
     const source = prefix + tail;
     const incremental = createIncrementalMarkdownPlugin();

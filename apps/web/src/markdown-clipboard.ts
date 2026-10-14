@@ -71,12 +71,6 @@ function codeFenceFor(code: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
-export function serializeMarkdownCodeFence(code: string, infoString: string): string {
-  const normalizedCode = code.replace(/\n$/, "");
-  const fence = codeFenceFor(normalizedCode);
-  return `${fence}${infoString}\n${normalizedCode}\n${fence}\n\n`;
-}
-
 function resolveCodeBlockLanguage(pre: Element): string | null {
   const declared =
     pre.closest("[data-language]")?.getAttribute("data-language") ??
@@ -86,7 +80,9 @@ function resolveCodeBlockLanguage(pre: Element): string | null {
 }
 
 function serializeCodeBlock(pre: Element): string {
-  return serializeMarkdownCodeFence(pre.textContent ?? "", resolveCodeBlockLanguage(pre) ?? "");
+  const code = (pre.textContent ?? "").replace(/\n$/, "");
+  const fence = codeFenceFor(code);
+  return `${fence}${resolveCodeBlockLanguage(pre) ?? ""}\n${code}\n${fence}\n\n`;
 }
 
 function serializeTableCell(cell: Element): string {
@@ -384,7 +380,6 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
-/** Serialize selected content as Markdown and HTML, preserving whole code blocks and math sources. */
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -398,6 +393,8 @@ export function chatMarkdownClipboardPayload(
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    // A selection inside an element with its own Markdown, such as a typeset formula,
+    // copies that Markdown instead of the rendered glyphs.
     const markdownCopy = ancestorElement
       ?.closest("[data-markdown-copy]")
       ?.getAttribute("data-markdown-copy");
@@ -414,12 +411,6 @@ export function chatMarkdownClipboardPayload(
       }
       continue;
     }
-    // A selection entirely inside KaTeX omits the wrapper that owns the TeX
-    // source. Copy the equation once instead of its duplicated visual glyphs.
-    const math = ancestorElement?.closest(
-      ".chat-markdown-math-inline, .chat-markdown-math-display",
-    );
-    if (math) container.replaceChildren(math.cloneNode(true));
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);

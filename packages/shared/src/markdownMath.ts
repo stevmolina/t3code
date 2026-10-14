@@ -6,6 +6,8 @@ import type { Construct, State } from "micromark-util-types";
 import remarkMath from "remark-math";
 import type { Plugin } from "unified";
 
+import { CHAT_MATH_CLASS } from "./markdownPipeline.ts";
+
 const BACKSLASH = 92;
 
 /** Recognize TeX delimiters in the parser, so code, links, and HTML retain their
@@ -185,12 +187,12 @@ export const remarkChatMath: Plugin<[], Root> = function () {
           const ending = copySource.endsWith(closing) ? `${padding}${closing}` : "";
           copySource = `${opening}${padding}${node.value}${ending}`;
         }
-        // Use one code node for both modes; ChatMarkdown renders it without its
-        // code-block toolbar. Only these classes opt into math, not code fences.
+        // One code node for both modes. Only the parser's class opts into math, so
+        // raw HTML cannot forge a formula or its copy source.
         node.data = {
           hName: "code",
           hProperties: {
-            className: [display ? "math-display" : "math-inline"],
+            className: display ? [CHAT_MATH_CLASS, "math-display"] : [CHAT_MATH_CLASS],
             dataMathSource: copySource,
           },
           hChildren: [{ type: "text", value: node.value }],

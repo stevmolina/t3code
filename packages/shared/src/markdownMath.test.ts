@@ -4,9 +4,9 @@ import remarkParse from "remark-parse";
 import { unified, type Plugin } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
-import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
-import { remarkChatMath } from "./markdown-math";
+import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
+import { remarkChatMath } from "./markdownMath.ts";
+import { CHAT_MATH_CLASS } from "./markdownPipeline.ts";
 
 function parser() {
   return unified().use(remarkParse).use(remarkGfm).use(remarkChatMath);
@@ -40,7 +40,7 @@ describe("chat math", () => {
     expect(nodes).toHaveLength(1);
     expect(nodes[0]?.value.trim()).toBe(String.raw`\frac{a_1}{b^2}`);
     expect(nodes[0]?.data?.hProperties).toEqual({
-      className: [display ? "math-display" : "math-inline"],
+      className: display ? [CHAT_MATH_CLASS, "math-display"] : [CHAT_MATH_CLASS],
       dataMathSource: source,
     });
   });
@@ -109,23 +109,8 @@ describe("chat math", () => {
     const processor = parser().use(remarkNormalizeListItemIndentation as Plugin<[], Root>);
     const tree = processor.runSync(processor.parse(source), source);
     expect(mathNodes(tree)[0]?.data?.hProperties).toEqual({
-      className: ["math-display"],
+      className: [CHAT_MATH_CLASS, "math-display"],
       dataMathSource: String.raw`\[x^2\]`,
     });
-  });
-
-  it("can parse every streamed prefix and matches a fresh parse after cached code", () => {
-    const incremental = createIncrementalMarkdownPlugin();
-    const source =
-      "```ts\nconst x = 1;\n```\n\n" +
-      String.raw`Inline \(\frac{x}{2}\) and $y$.` +
-      "\n\n\\[\n\\begin{aligned}a &= b \\\\\nc &= d\\end{aligned}\n\\]";
-    for (let end = 0; end <= source.length; end++) {
-      const prefix = source.slice(0, end);
-      const processor = parser().use(incremental);
-      expect(processor.runSync(processor.parse(prefix), prefix), `prefix ${end}`).toEqual(
-        parse(prefix),
-      );
-    }
   });
 });
