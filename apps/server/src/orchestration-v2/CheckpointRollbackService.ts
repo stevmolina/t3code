@@ -275,10 +275,12 @@ export const layer: Layer.Layer<
           candidate.scopeId === scope.id &&
           candidate.appRunOrdinal !== null &&
           candidate.appRunOrdinal > targetOrdinal &&
-          candidate.status === "ready",
+          // A missing point is still a conversation-only rewind target until it goes stale.
+          (candidate.status === "ready" || candidate.status === "missing"),
       );
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+      const staleRefs = staleCheckpoints.filter((candidate) => candidate.status === "ready");
+      if (staleRefs.length > 0) {
+        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleRefs });
       }
 
       // Thread commands write full provider thread rows under this lock. Without

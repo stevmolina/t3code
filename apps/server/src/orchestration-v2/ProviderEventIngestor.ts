@@ -492,7 +492,8 @@ export const layer: Layer.Layer<
       const runIds = new Set(runs.map((run) => run.id));
       const events: Array<OrchestrationV2DomainEvent> = [];
       for (const checkpoint of projection.checkpoints) {
-        if (checkpoint.status !== "ready" || checkpoint.runId === null) continue;
+        if (checkpoint.status !== "ready" && checkpoint.status !== "missing") continue;
+        if (checkpoint.runId === null) continue;
         if (!runIds.has(checkpoint.runId)) continue;
         events.push({
           id: yield* eventId(),

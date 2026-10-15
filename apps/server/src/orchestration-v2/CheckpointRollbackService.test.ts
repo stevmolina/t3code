@@ -128,7 +128,11 @@ it.effect("accepts a missing checkpoint for conversation-only rollback", () => {
     },
     providerThreads: [{ id: providerThreadId, providerSessionId, providerInstanceId }],
     providerSessions: [],
-    checkpoints: [{ id: checkpointId, scopeId, status: "missing", appRunOrdinal: null }],
+    checkpoints: [
+      { id: checkpointId, scopeId, status: "missing", appRunOrdinal: null },
+      // A later run's point, discarded by this rollback.
+      { id: CheckpointId.make("checkpoint:later"), scopeId, status: "missing", appRunOrdinal: 1 },
+    ],
     checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
     runs: [],
     attempts: [],
@@ -177,6 +181,15 @@ it.effect("accepts a missing checkpoint for conversation-only rollback", () => {
     assert.equal(open.mock.calls.length, 1);
     assert.equal(restore.mock.calls.length, 0);
     assert.ok(written.some((event) => event.type === "provider-thread.updated"));
+    // Discarded points go stale, so a later rewind cannot land on a discarded turn.
+    assert.ok(
+      written.some(
+        (event) =>
+          event.type === "checkpoint.captured" &&
+          event.payload.id === "checkpoint:later" &&
+          event.payload.status === "stale",
+      ),
+    );
 
     // File restore still needs a ready checkpoint with a file snapshot.
     const error = yield* service
