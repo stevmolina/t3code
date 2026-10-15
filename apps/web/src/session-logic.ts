@@ -1049,7 +1049,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   readonly activeRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
   const rewindableCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
-  let turnsBeforeActiveRun = 0;
+  let latestBeforeActiveRun: ThreadCheckpointSummary | undefined;
   for (const checkpoint of input.checkpoints) {
     // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
     // but still pin a conversation position that a conversation-only rewind
@@ -1057,8 +1057,13 @@ export function deriveRevertTurnCountByUserMessageId(input: {
     if (checkpoint.status === "ready" || checkpoint.status === "missing") {
       rewindableCheckpointByRunId.set(checkpoint.runId, checkpoint);
     }
-    if (checkpoint.runId !== input.activeRunId) {
-      turnsBeforeActiveRun = Math.max(turnsBeforeActiveRun, checkpoint.checkpointTurnCount);
+    // Stale points belong to turns an earlier rewind discarded.
+    if (
+      checkpoint.runId !== input.activeRunId &&
+      checkpoint.status !== "stale" &&
+      checkpoint.checkpointTurnCount > (latestBeforeActiveRun?.checkpointTurnCount ?? 0)
+    ) {
+      latestBeforeActiveRun = checkpoint;
     }
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
@@ -1070,8 +1075,13 @@ export function deriveRevertTurnCountByUserMessageId(input: {
     if (entry.message.runId === null) continue;
     const checkpoint = rewindableCheckpointByRunId.get(entry.message.runId);
     if (checkpoint === undefined) {
-      if (entry.message.runId === input.activeRunId) {
-        byUserMessageId.set(entry.message.id, turnsBeforeActiveRun);
+      // A running reply rewinds to the turn before it, unless that point failed to capture.
+      const before = latestBeforeActiveRun;
+      if (
+        entry.message.runId === input.activeRunId &&
+        (before === undefined || before.status === "ready" || before.status === "missing")
+      ) {
+        byUserMessageId.set(entry.message.id, before?.checkpointTurnCount ?? 0);
       }
       continue;
     }
@@ -1080,11 +1090,16 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-export function resolvePendingRevertTarget(summaries: ReadonlyArray<TurnDiffSummary>, turnCount: number): TurnDiffSummary | undefined {
+export function resolvePendingRevertTarget(
+  summaries: ReadonlyArray<TurnDiffSummary>,
+  turnCount: number,
+): TurnDiffSummary | undefined {
   return summaries.findLast((summary) => summary.checkpointTurnCount === turnCount);
 }
 
-export function isRevertFilesDisabled(target: Pick<TurnDiffSummary, "status"> | undefined): boolean {
+export function isRevertFilesDisabled(
+  target: Pick<TurnDiffSummary, "status"> | undefined,
+): boolean {
   return target !== undefined && target.status !== "ready";
 }
 

@@ -321,23 +321,28 @@ describe("V2 session presentation", () => {
     });
     const done = RunId.make("run-done");
     const active = RunId.make("run-active");
-    const targets = deriveRevertTurnCountByUserMessageId({
-      timelineEntries: [message("first", done), message("second", active)],
-      checkpoints: [
-        {
-          runId: done,
-          checkpointTurnCount: 1,
-          checkpointRef: "checkpoint-run-1" as never,
-          status: "error",
-          files: [],
-          assistantMessageId: null,
-          completedAt: "2026-06-20T00:00:03.000Z",
-        },
-      ],
-      activeRunId: active,
-    });
+    const targets = (status: "ready" | "error" | "stale") =>
+      deriveRevertTurnCountByUserMessageId({
+        timelineEntries: [message("first", done), message("second", active)],
+        checkpoints: [
+          {
+            runId: done,
+            checkpointTurnCount: 1,
+            checkpointRef: "checkpoint-run-1" as never,
+            status,
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-06-20T00:00:03.000Z",
+          },
+        ],
+        activeRunId: active,
+      }).get(MessageId.make("second"));
 
-    expect([...targets]).toEqual([[MessageId.make("second"), 1]]);
+    expect(targets("ready")).toBe(1);
+    // A failed capture offers no point to stop and rewind to.
+    expect(targets("error")).toBeUndefined();
+    // A point an earlier rewind discarded is not the turn before the reply.
+    expect(targets("stale")).toBe(0);
   });
 
   it("maps missing checkpoints to conversation-only revert targets", () => {
@@ -409,9 +414,33 @@ describe("V2 session presentation", () => {
   it("disables Revert files too unless the rollback target is ready", () => {
     const runId = RunId.make("run-revert-target");
     const summaries = [
-      { runId, checkpointTurnCount: 0, checkpointRef: "c0" as never, status: "ready" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:01.000Z" },
-      { runId, checkpointTurnCount: 1, checkpointRef: "c1" as never, status: "missing" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:02.000Z" },
-      { runId, checkpointTurnCount: 2, checkpointRef: "c2" as never, status: "ready" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:03.000Z" },
+      {
+        runId,
+        checkpointTurnCount: 0,
+        checkpointRef: "c0" as never,
+        status: "ready" as const,
+        files: [],
+        assistantMessageId: null,
+        completedAt: "2026-06-20T00:00:01.000Z",
+      },
+      {
+        runId,
+        checkpointTurnCount: 1,
+        checkpointRef: "c1" as never,
+        status: "missing" as const,
+        files: [],
+        assistantMessageId: null,
+        completedAt: "2026-06-20T00:00:02.000Z",
+      },
+      {
+        runId,
+        checkpointTurnCount: 2,
+        checkpointRef: "c2" as never,
+        status: "ready" as const,
+        files: [],
+        assistantMessageId: null,
+        completedAt: "2026-06-20T00:00:03.000Z",
+      },
     ];
     expect(resolvePendingRevertTarget(summaries, 1)?.status).toBe("missing");
     expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 1))).toBe(true);
