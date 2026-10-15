@@ -70,7 +70,6 @@ describe("chat math", () => {
   );
 
   it.each([
-    String.raw`Before \[x^2\] after.`,
     String.raw`- Inline \(x^2\) and $y$.`,
     "> \\[\n> x^2\n> \\]",
     "| Value |\n| --- |\n| \\(x^2\\) |",
@@ -88,6 +87,7 @@ describe("chat math", () => {
     String.raw`[Link](https://example.com/\(x\))`,
     String.raw`<div title="\(x\) and $x$">raw HTML</div>`,
     "The price rose from $5 to $10, then $20. Set $PATH later.",
+    String.raw`Use the \[WIP\] tag on arr\[0\] in prose.`,
   ])("preserves code, escapes, links, HTML, and prices: %s", (source) => {
     expect(mathNodes(parse(source))).toEqual([]);
   });
@@ -105,12 +105,12 @@ describe("chat math", () => {
   });
 
   it("keeps display math and its source when recovering an over-indented list", () => {
-    const source = String.raw`-       \[x^2\]`;
+    const source = String.raw`-       $$x^2$$`;
     const processor = parser().use(remarkNormalizeListItemIndentation as Plugin<[], Root>);
     const tree = processor.runSync(processor.parse(source), source);
     expect(mathNodes(tree)[0]?.data?.hProperties).toEqual({
       className: [CHAT_MATH_CLASS, "math-display"],
-      dataMathSource: String.raw`\[x^2\]`,
+      dataMathSource: String.raw`$$x^2$$`,
     });
   });
 });

@@ -51,9 +51,9 @@ function latexMath(flow: boolean): Construct {
         return opening;
       }
 
-      /** Select the matching delimiter, allowing only brackets in flow mode. */
+      /** Brackets open display math on their own line; prose takes only parentheses, so `\[WIP\]` stays text. */
       function opening(code: number | null): State | undefined {
-        if (code !== 91 && (flow || code !== 40)) return nok(code);
+        if (flow ? code !== 91 : code !== 40) return nok(code);
         closing = code === 91 ? 93 : 41;
         effects.consume(code);
         effects.exit(fence);
