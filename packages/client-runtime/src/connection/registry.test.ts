@@ -164,6 +164,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly serverLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -385,7 +386,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       const prepared: PreparedConnection = {
         ...PREPARED,
         environmentId: target.environmentId,
-        label: target.label,
+        label: options?.serverLabel ?? target.label,
         httpAuthorization: Option.isSome(credential)
           ? { _tag: "Bearer", token: credential.value.token }
           : null,
@@ -2300,6 +2301,33 @@ describe("EnvironmentRegistry routes", () => {
           learned: true,
           httpBaseUrl,
         });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("saves the name a connected server reports for itself", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { serverLabel: "Personal VPS" },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter(
+            (entries) => entries.get(BEARER_TARGET.environmentId)?.target.label === "Personal VPS",
+          ),
+          Stream.runHead,
+        );
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), BEARER_TARGET.environmentId),
+        ).toEqual([new BearerConnectionTarget({ ...BEARER_TARGET, label: "Personal VPS" })]);
+        expect((yield* Ref.get(harness.storedProfiles)).get(BEARER_PROFILE.connectionId)).toEqual(
+          new BearerConnectionProfile({ ...BEARER_PROFILE, label: "Personal VPS" }),
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

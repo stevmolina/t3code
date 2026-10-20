@@ -10,9 +10,17 @@ import * as Option from "effect/Option";
 import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
+  type ConnectionProfile,
   type ConnectionRoute,
+  SshConnectionProfile,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -354,6 +362,61 @@ export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<Conne
 export interface ReportedEndpoint {
   readonly httpBaseUrl: string;
   readonly kind?: string;
+}
+
+/**
+ * Routes carrying the name the server reports for itself, or null when nothing
+ * changes. A profile keeps the server's name as last seen, so a target label
+ * that differs from its profile's is one the user chose: the whole environment
+ * keeps it, and only the profiles follow the server.
+ */
+export function routesWithServerLabel(
+  entry: ConnectionCatalogEntry,
+  serverLabel: string,
+): ReadonlyArray<ConnectionRoute> | null {
+  const label = serverLabel.trim();
+  if (label === "") return null;
+  const routes = connectionRoutes(entry);
+  const userNamed = routes.some((route) => {
+    const profile = Option.getOrNull(route.profile);
+    return profile !== null && profile.label !== route.target.label;
+  });
+  let changed = false;
+  const next = routes.map((route): ConnectionRoute => {
+    const keepTarget = userNamed || route.target.label === label;
+    const profile = Option.getOrNull(route.profile);
+    const renamedProfile =
+      profile === null || profile.label === label ? null : profileWithLabel(profile, label);
+    if (keepTarget && renamedProfile === null) return route;
+    changed = true;
+    return {
+      target: keepTarget ? route.target : targetWithLabel(route.target, label),
+      profile: renamedProfile === null ? route.profile : Option.some(renamedProfile),
+    };
+  });
+  return changed ? next : null;
+}
+
+function targetWithLabel(target: ConnectionTarget, label: string): ConnectionTarget {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return new PrimaryConnectionTarget({ ...target, label });
+    case "BearerConnectionTarget":
+      return new BearerConnectionTarget({ ...target, label });
+    case "RelayConnectionTarget":
+      return new RelayConnectionTarget({ ...target, label });
+    case "SshConnectionTarget":
+      return new SshConnectionTarget({ ...target, label });
+  }
+}
+
+function profileWithLabel(profile: ConnectionProfile, label: string): ConnectionProfile {
+  switch (profile._tag) {
+    case "BearerConnectionProfile":
+      return new BearerConnectionProfile({ ...profile, label });
+    case "SshConnectionProfile":
+      return new SshConnectionProfile({ ...profile, label });
+  }
 }
 
 function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRoute {

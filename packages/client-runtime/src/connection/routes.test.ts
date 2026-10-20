@@ -19,6 +19,7 @@ import {
   mergeLearnedRoutes,
   removedWithRelay,
   routesAfterRemoving,
+  routesWithServerLabel,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -445,5 +446,43 @@ describe("learned routes", () => {
     });
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
+  });
+
+  describe("routesWithServerLabel", () => {
+    const entry = entryWithRoutes({ target: LAN.target, profile: LAN.profile, enabled: true }, [
+      LAN,
+      RELAY,
+    ]);
+    const labels = (routes: ReadonlyArray<ConnectionRoute> | null) =>
+      routes?.map((route) => [route.target.label, Option.getOrNull(route.profile)?.label ?? null]);
+
+    it("renames every route to the server's current name", () => {
+      expect(labels(routesWithServerLabel(entry, " Personal VPS "))).toEqual([
+        ["Personal VPS", "Personal VPS"],
+        ["Personal VPS", null],
+      ]);
+    });
+
+    it("changes nothing when the name is the same or empty", () => {
+      expect(routesWithServerLabel(entry, "Desk")).toBeNull();
+      expect(routesWithServerLabel(entry, "  ")).toBeNull();
+    });
+
+    it("keeps a name the user chose and records the server's in the profile", () => {
+      const named = entryWithRoutes(entry, [
+        {
+          target: new BearerConnectionTarget({
+            ...(LAN.target as BearerConnectionTarget),
+            label: "My box",
+          }),
+          profile: LAN.profile,
+        },
+        RELAY,
+      ]);
+      expect(labels(routesWithServerLabel(named, "Personal VPS"))).toEqual([
+        ["My box", "Personal VPS"],
+        ["Desk", null],
+      ]);
+    });
   });
 });

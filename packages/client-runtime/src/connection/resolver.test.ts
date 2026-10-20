@@ -237,7 +237,7 @@ describe("ConnectionResolver", () => {
 
       expect(yield* broker.prepare(catalogEntry(target))).toEqual({
         environmentId: ENVIRONMENT_ID,
-        label: "Primary",
+        label: "Compatible environment",
         httpBaseUrl: "http://127.0.0.1:3777",
         socketUrl:
           "ws://127.0.0.1:3777/ws?clientSurface=web&clientDeviceType=desktop&connectionMethod=direct&orchestrationProtocol=2",
@@ -340,7 +340,8 @@ describe("ConnectionResolver", () => {
 
       expect(yield* broker.prepare(catalogEntry(target))).toEqual({
         environmentId: ENVIRONMENT_ID,
-        label: "Authorized relay environment",
+        // The freshly fetched descriptor's name, not the token's.
+        label: "Compatible environment",
         httpBaseUrl: ENDPOINT.httpBaseUrl,
         socketUrl: `wss://authorized.example.test/ws?wsTicket=dpop&orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}`,
         httpAuthorization: {

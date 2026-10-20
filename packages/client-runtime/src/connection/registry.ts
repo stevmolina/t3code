@@ -53,6 +53,7 @@ import {
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  routesWithServerLabel,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -361,6 +362,7 @@ export const make = Effect.gen(function* () {
             // before an enabled, compatible environment starts connecting.
             initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            adoptServerLabel: (label) => adoptServerLabel({ environmentId, label }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -922,6 +924,54 @@ export const make = Effect.gen(function* () {
     ).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not save routes learned from the environment.", {
+          environmentId: input.environmentId,
+          error,
+        }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
+      ),
+    );
+  });
+
+  /**
+   * A saved environment takes the name its server reports, so renaming the
+   * machine renames it everywhere. Platform environments keep the host's name.
+   */
+  const adoptServerLabel = Effect.fn("EnvironmentRegistry.adoptServerLabel")(function* (input: {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }) {
+    return yield* withLeaseLock(
+      input.environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(input.environmentId)) {
+          return Option.none<ConnectionCatalogEntry>();
+        }
+        const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
+        if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
+        const routes = routesWithServerLabel(entry, input.label);
+        if (routes === null) return Option.none<ConnectionCatalogEntry>();
+        const previous = connectionRoutes(entry);
+        for (const [index, route] of routes.entries()) {
+          const profile = Option.getOrNull(route.profile);
+          if (profile !== null && profile !== Option.getOrNull(previous[index]!.profile)) {
+            yield* profiles.put(profile);
+          }
+        }
+        const next = entryWithRoutes(entry, routes);
+        yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
+        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(input.environmentId);
+        if (lease !== undefined) {
+          yield* SubscriptionRef.update(serviceScopes, (current) =>
+            new Map(current).set(input.environmentId, { ...lease, entry: next }),
+          );
+        }
+        yield* SubscriptionRef.update(entries, (current) =>
+          new Map(current).set(input.environmentId, next),
+        );
+        return Option.some(next);
+      }),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not save the environment's new name.", {
           environmentId: input.environmentId,
           error,
         }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),

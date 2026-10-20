@@ -589,7 +589,8 @@ describe("connection onboarding", () => {
         },
         profile: {
           environmentId,
-          label: "Renamed environment",
+          // The server's name, so the edited label survives the server reporting a new one.
+          label: "Old label",
           httpBaseUrl: "http://100.65.180.100:3773/",
           wsBaseUrl: "ws://100.65.180.100:3773/",
         },

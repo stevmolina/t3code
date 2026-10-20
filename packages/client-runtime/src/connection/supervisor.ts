@@ -122,6 +122,10 @@ export interface EnvironmentSupervisorOptions {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /** Saves the name the server reported for itself, when it changed. */
+  readonly adoptServerLabel?: (
+    label: string,
+  ) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
 export function retryDelayMs(failureCount: number, random: number): number {
@@ -308,6 +312,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (Option.isSome(updated)) {
       yield* Ref.set(currentEntry, updated.value);
       yield* requestBetterRouteCheck(lease);
+    }
+  });
+
+  // One fiber, so a learned route copies the label saved just before it.
+  const afterConnected = Effect.fnUntraced(function* (
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+  ) {
+    if (options?.adoptServerLabel !== undefined) {
+      const updated = yield* options.adoptServerLabel(lease.prepared.label);
+      if (Option.isSome(updated)) yield* Ref.set(currentEntry, updated.value);
+    }
+    if (options?.learnRoutes !== undefined) {
+      yield* learnRoutesFrom(options.learnRoutes, lease);
     }
   });
 
@@ -780,9 +797,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
-    if (options?.learnRoutes !== undefined) {
-      yield* learnRoutesFrom(options.learnRoutes, active.lease).pipe(Effect.forkScoped);
-    }
+    yield* afterConnected(active.lease).pipe(Effect.forkScoped);
     yield* setState({
       desired: true,
       network: currentIntent.network,

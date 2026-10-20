@@ -239,7 +239,9 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     profile: new BearerConnectionProfile({
       connectionId,
       environmentId: options.input.environmentId,
-      label,
+      // The profile keeps the server's name, so a label edited here is kept
+      // when the server reports a new name (see `routesWithServerLabel`).
+      label: entry.profile.value.label,
       httpBaseUrl,
       wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
     }),
@@ -253,7 +255,8 @@ export const prepareSshRegistration = Effect.fn(
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
   const provisioned = yield* gateway.provision(input.target, input.expectedEnvironmentId);
   const connectionId = `ssh:${provisioned.environmentId}:${sshTargetKey(provisioned.bootstrap.target)}`;
-  const label = input.label?.trim() || provisioned.label || provisioned.bootstrap.target.alias;
+  const serverLabel = provisioned.label || provisioned.bootstrap.target.alias;
+  const label = input.label?.trim() || serverLabel;
 
   return new SshConnectionRegistration({
     target: new SshConnectionTarget({
@@ -264,7 +267,7 @@ export const prepareSshRegistration = Effect.fn(
     profile: new SshConnectionProfile({
       connectionId,
       environmentId: provisioned.environmentId,
-      label,
+      label: serverLabel,
       target: provisioned.bootstrap.target,
     }),
     credential: new BearerConnectionCredential({ token: provisioned.bearerToken }),

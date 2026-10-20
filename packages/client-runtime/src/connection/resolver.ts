@@ -315,7 +315,8 @@ export const make = Effect.gen(function* () {
         actual: descriptor.environmentId,
       });
     }
-    return { prepared, descriptor };
+    // The descriptor was just fetched; a cached relay token can carry an older name.
+    return { prepared: { ...prepared, label: descriptor.label }, descriptor };
   });
 
   const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
