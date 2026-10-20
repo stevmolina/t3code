@@ -37,6 +37,21 @@ export function usePanelAnimationSettings(): {
   return { active: durationMs > 0 && !prefersReducedMotion && !suppressed, durationMs };
 }
 
+// Callers build the retained value inline, so it is a new object every render.
+// Comparing fields keeps the render-time sync below from looping.
+function samePresenceValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every(
+    (key) =>
+      Object.hasOwn(right, key) && Object.is(Reflect.get(left, key), Reflect.get(right, key)),
+  );
+}
+
 export function usePanelPresence<T>(
   open: boolean,
   value: T | null,
@@ -48,7 +63,7 @@ export function usePanelPresence<T>(
   const [retained, setRetained] = useState<{ scopeKey: string | null; value: T | null } | null>(
     open ? { scopeKey, value } : null,
   );
-  if (open && (retained?.scopeKey !== scopeKey || retained.value !== value)) {
+  if (open && (retained?.scopeKey !== scopeKey || !samePresenceValue(retained.value, value))) {
     setRetained({ scopeKey, value });
   }
 

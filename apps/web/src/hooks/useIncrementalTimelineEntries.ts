@@ -17,6 +17,21 @@ function sameInput(left: TimelineEntriesInput, right: TimelineEntriesInput): boo
   );
 }
 
+function createTimelineDerivation() {
+  let previous: { threadKey: string | null; projection: TimelineEntriesProjection } | null = null;
+  return (threadKey: string | null, input: TimelineEntriesInput) => {
+    if (previous?.threadKey === threadKey && sameInput(previous.projection.input, input)) {
+      return previous.projection.entries;
+    }
+    const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
+      input,
+      previous?.threadKey === threadKey ? previous.projection : null,
+    );
+    previous = { threadKey, projection };
+    return projection.entries;
+  };
+}
+
 /**
  * Timeline entries for a thread, derived from the previous projection so
  * unchanged rows keep their identity and memoized rows skip rendering. A new
@@ -26,17 +41,8 @@ export function useIncrementalTimelineEntries(
   threadKey: string | null,
   input: TimelineEntriesInput,
 ): TimelineEntriesProjection["entries"] {
-  const [state, setState] = useState(() => ({
-    threadKey,
-    projection: deriveTimelineEntriesFromVisibleTurnItemsWithState(input),
-  }));
-  if (state.threadKey === threadKey && sameInput(state.projection.input, input)) {
-    return state.projection.entries;
-  }
-  const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
-    input,
-    state.threadKey === threadKey ? state.projection : null,
-  );
-  setState({ threadKey, projection });
-  return projection.entries;
+  // Each mounted timeline owns a derivation cache. Fresh input collections
+  // update the cache without scheduling another React render.
+  const [derive] = useState(createTimelineDerivation);
+  return derive(threadKey, input);
 }

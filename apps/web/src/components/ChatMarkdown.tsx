@@ -3525,7 +3525,7 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
-  const markdown = useMemo(() => fenceVisualizeCitations(text), [text]);
+  const markdown = fenceVisualizeCitations(text);
   const {
     componentState,
     handleCopy,

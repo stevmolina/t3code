@@ -90,7 +90,7 @@ import {
 } from "@t3tools/client-runtime/errors";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
-import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { useThreadSnoozeState } from "../hooks/useThreadSnoozeState";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
@@ -5024,36 +5024,11 @@ export default function ChatView(props: ChatViewProps) {
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
   const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
-  // The compiler caches render results on their inputs, so a clock read in render
-  // stays frozen until the shell changes. The clock is state: reset with the shell,
-  // and moved by the wake timer.
-  const [snoozeClockState, setSnoozeClockState] = useState(() => ({
-    shell: activeThreadShell,
-    now: new Date().toISOString(),
-  }));
-  if (snoozeClockState.shell !== activeThreadShell) {
-    setSnoozeClockState({ shell: activeThreadShell, now: new Date().toISOString() });
-  }
-  const snoozeClock = snoozeClockState.now;
-  const activeThreadSnoozed =
-    activeThreadShell !== null &&
-    supportsSnooze &&
-    effectiveSnoozed(activeThreadShell, { now: snoozeClock });
-  useEffect(() => {
-    if (!activeThreadSnoozed) return;
-    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
-    if (!Number.isFinite(wakeAtMs)) return;
-    const id = window.setTimeout(
-      () => setSnoozeClockState((clock) => ({ ...clock, now: new Date().toISOString() })),
-      Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
-    );
-    return () => window.clearTimeout(id);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A clock that lands before the wake time (timer clamping, clock skew) re-arms the timer.
-  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeClock]);
-  const activeThreadWokeAt =
-    activeThreadShell !== null && supportsSnooze
-      ? threadWokeAt(activeThreadShell, { now: snoozeClock })
-      : null;
+  const { snoozed: activeThreadSnoozed, wokeAt: activeThreadWokeAt } = useThreadSnoozeState(
+    activeThreadKey,
+    activeThreadShell,
+    supportsSnooze,
+  );
   const acknowledgeThreadWoke = useAcknowledgeThreadWoke();
   const acknowledgeActiveThreadWoke = () => {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
