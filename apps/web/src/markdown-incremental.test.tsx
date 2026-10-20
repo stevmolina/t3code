@@ -8,7 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { remarkCodexDirectives } from "@t3tools/shared/codexMarkdownDirectives";
 import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
-import { remarkChatMath } from "@t3tools/shared/markdownMath";
+import remarkMath from "remark-math";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
 import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
 
@@ -32,7 +32,7 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
         observeParsing,
         capture,
         remarkGfm,
-        remarkChatMath,
+        [remarkMath, { singleDollarTextMath: true }],
         remarkGithubAlerts,
         remarkNormalizeListItemIndentation,
         remarkCodexDirectives,

@@ -127,21 +127,16 @@ function rehypePreserveImageSourceMeta() {
   };
 }
 
-/** Marks parser-made math. Random per load, so raw HTML in a message cannot claim it. */
-export const CHAT_MATH_CLASS = `math-${crypto.getRandomValues(new Uint32Array(2)).join("")}`;
-
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+    // Fence languages plus the two math classes the web chat's math plugin emits.
     code: [
-      // The first className rule wins, so math classes join the default language rule.
-      ["className", /^language-./, CHAT_MATH_CLASS, "math-display"],
-      ...(defaultSchema.attributes?.code ?? []),
+      ["className", /^language-./, "math-inline", "math-display"],
       "dataCodeMeta",
       "dataInlineCode",
-      "dataMathSource",
     ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
@@ -289,7 +284,7 @@ function keepWindowsPathEscape(this: EscapeCompileContext) {
  * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
  * `C:\x and \*this\*` must still read `*this*`.
  */
-export function remarkKeepWindowsPaths(this: Processor) {
+function remarkKeepWindowsPaths(this: Processor) {
   const data = this.data();
   (data.fromMarkdownExtensions ??= []).push({
     exit: {
