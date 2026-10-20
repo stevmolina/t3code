@@ -1,8 +1,8 @@
 import { useLayoutEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, render } from "../test/render";
-import { usePanelNavigationSuppression } from "./panelAnimations";
+import { act, fakeTimers, render } from "../test/render";
+import { usePanelNavigationSuppression, usePanelPresence } from "./panelAnimations";
 
 function SuppressionProbe({
   navigationKey,
@@ -15,6 +15,26 @@ function SuppressionProbe({
   useLayoutEffect(() => {
     observed.push(suppressed);
   }, [observed, suppressed]);
+  return null;
+}
+
+type Presence = { present: boolean; value: { surface: string | null } | null };
+
+function PresenceProbe({
+  open,
+  surface,
+  observed,
+}: {
+  open: boolean;
+  surface: string | null;
+  observed: Presence[];
+}) {
+  // oxlint-disable-next-line t3code/no-manual-memo -- Reproduce a caller that builds the panel value during render.
+  "use no memo";
+  const result = usePanelPresence(open, { surface }, true, "local:thread", 150);
+  useLayoutEffect(() => {
+    observed.push(result);
+  });
   return null;
 }
 
@@ -51,5 +71,29 @@ describe("usePanelNavigationSuppression", () => {
     expect(observed.at(-1)).toBe(true);
     await paintPendingFrame();
     expect(observed.at(-1)).toBe(false);
+  });
+});
+
+describe("usePanelPresence", () => {
+  it("renders an open panel whose value is rebuilt every render", async () => {
+    const observed: Presence[] = [];
+    await using screen = await render(
+      <PresenceProbe open surface="pull-request" observed={observed} />,
+    );
+    await screen.rerender(<PresenceProbe open surface="pull-request" observed={observed} />);
+    expect(observed.at(-1)).toEqual({ present: true, value: { surface: "pull-request" } });
+  });
+
+  it("keeps the last open value while the panel animates closed", async () => {
+    const observed: Presence[] = [];
+    await using screen = await render(
+      <PresenceProbe open surface="pull-request" observed={observed} />,
+    );
+    using _timers = fakeTimers();
+    await screen.rerender(<PresenceProbe open surface="files" observed={observed} />);
+    await screen.rerender(<PresenceProbe open={false} surface={null} observed={observed} />);
+    expect(observed.at(-1)).toEqual({ present: true, value: { surface: "files" } });
+    await act(() => vi.advanceTimersByTime(150));
+    expect(observed.at(-1)).toEqual({ present: false, value: null });
   });
 });
