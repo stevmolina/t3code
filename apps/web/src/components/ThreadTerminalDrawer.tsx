@@ -657,6 +657,9 @@ function TerminalSessionViewport({
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
         },
+        onClipboardWrite: (text) => {
+          void writeTextToClipboard(text, "terminal output").catch(() => undefined);
+        },
       });
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {

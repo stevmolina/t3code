@@ -1,5 +1,6 @@
 import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
+import { TerminalClipboardScanner } from "./osc52";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -510,6 +511,8 @@ export interface GhosttyTerminalSurfaceOptions {
    * whose Paste entry can never reach a canvas terminal.
    */
   readonly onContextMenu?: (event: MouseEvent) => void;
+  /** Text a program put on the clipboard with OSC 52 while this terminal had focus. */
+  readonly onClipboardWrite?: (text: string) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -594,6 +597,7 @@ export class GhosttyTerminalSurface {
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
+  private readonly clipboardScanner = new TerminalClipboardScanner();
   private wheelRemainder = 0;
   private touchScroll: {
     pointerId: number;
@@ -737,16 +741,29 @@ export class GhosttyTerminalSurface {
         ? undefined
         : () => this.cancelSynchronizedRenderTimer(),
     );
+    this.forwardClipboardWrites(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.scrollbarDirty = true;
     this.requestRender();
   }
 
+  private forwardClipboardWrites(data: string): void {
+    const onClipboardWrite = this.options.onClipboardWrite;
+    if (!onClipboardWrite) return;
+    const text = this.clipboardScanner.scan(data).at(-1);
+    // Only the terminal the user is working in may write the clipboard, so a
+    // background program cannot replace what they copied elsewhere.
+    if (text === undefined || !document.hasFocus() || document.activeElement !== this.input) return;
+    onClipboardWrite(text);
+  }
+
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
+    // Replayed history must never copy, so its OSC 52 sequences are not scanned.
+    this.clipboardScanner.reset();
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
