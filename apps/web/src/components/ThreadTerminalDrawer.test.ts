@@ -87,3 +87,36 @@ it("retains visible output and selection until a replacement subscription receiv
   synchronizeTerminalOutput(terminal, cleared, observedCursor);
   expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
 });
+
+it("keeps the selection while output is appended and clears it on a replay", () => {
+  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
+  const attached = applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+    type: "snapshot",
+    snapshot: {
+      threadId: "thread",
+      terminalId: "term-1",
+      cwd: "/repo",
+      worktreePath: null,
+      status: "running",
+      pid: 123,
+      history: "Open this URL to log in",
+      exitCode: null,
+      exitSignal: null,
+      label: "Terminal 1",
+      updatedAt: "2026-10-21T00:00:00.000Z",
+    },
+  });
+  const cursor = synchronizeTerminalOutput(terminal, attached, INITIAL_TERMINAL_OUTPUT_CURSOR);
+  expect(terminal.clearSelection).toHaveBeenCalledTimes(1);
+  terminal.clearSelection.mockClear();
+
+  const redrawn = applyTerminalAttachStreamEvent(attached, {
+    type: "output",
+    threadId: "thread",
+    terminalId: "term-1",
+    data: "\u001b[6;1H\u001b[2K/ waiting for code",
+  });
+  synchronizeTerminalOutput(terminal, redrawn, cursor);
+  expect(terminal.write).toHaveBeenLastCalledWith("\u001b[6;1H\u001b[2K/ waiting for code");
+  expect(terminal.clearSelection).not.toHaveBeenCalled();
+});

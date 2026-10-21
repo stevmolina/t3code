@@ -161,7 +161,9 @@ export function synchronizeTerminalOutput(
   if (session.version === 0) return cursor;
   const update = readTerminalOutputUpdate(session.output, cursor);
   writeTerminalOutputUpdate(terminal, update);
-  terminal.clearSelection();
+  // Only a replay invalidates the selection. Appended output must keep it, or a
+  // program that redraws constantly (a login spinner) makes text uncopyable.
+  if (update.type === "reset") terminal.clearSelection();
   return update.cursor;
 }
 
