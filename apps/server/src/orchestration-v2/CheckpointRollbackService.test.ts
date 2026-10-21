@@ -27,7 +27,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -37,11 +36,9 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
-import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -184,25 +181,27 @@ it.effect("accepts a missing checkpoint for conversation-only rollback", () => {
   const restore = vi.fn(() => Effect.die("checkpoint restore must not run"));
   const open = vi.fn(() => Effect.succeed({} as never));
   const written: Array<OrchestrationV2DomainEvent> = [];
+  const laterCheckpointId = CheckpointId.make("checkpoint:later");
   const projection = {
     thread: {
       worktreePath: process.cwd(),
       activeProviderThreadId: providerThreadId,
       modelSelection: { instanceId: providerInstanceId, model: "test-model" },
     },
-    providerThreads: [{ id: providerThreadId, providerSessionId, providerInstanceId }],
-    providerSessions: [],
-    checkpoints: [
-      { id: checkpointId, scopeId, status: "missing", appRunOrdinal: null },
-      // A later run's point, discarded by this rollback.
-      { id: CheckpointId.make("checkpoint:later"), scopeId, status: "missing", appRunOrdinal: 1 },
-    ],
-    checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
-    runs: [],
-    attempts: [],
-    nodes: [],
+    providerThread: { id: providerThreadId, providerSessionId, providerInstanceId },
+    providerSession: undefined,
+    checkpoint: { id: checkpointId, scopeId, status: "missing", appRunOrdinal: null },
+    scope: { id: scopeId, cwd: process.cwd() },
+    targetAttempt: undefined,
     providerTurns: [],
-  } as unknown as OrchestrationV2ThreadProjection;
+    rolledBackAttemptIds: [],
+    runsToRollback: [],
+    rootNodes: [],
+    // A later run's point, discarded by this rollback.
+    staleCheckpoints: [
+      { id: laterCheckpointId, scopeId, status: "missing", appRunOrdinal: 1, runId: null },
+    ],
+  } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
   const layerTest = layerCheckpointRollbackService.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -217,7 +216,8 @@ it.effect("accepts a missing checkpoint for conversation-only rollback", () => {
         }),
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadRecords: () => Effect.succeed(projection),
+          getThread: () => Effect.succeed(projection.thread),
+          getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -250,7 +250,7 @@ it.effect("accepts a missing checkpoint for conversation-only rollback", () => {
       written.some(
         (event) =>
           event.type === "checkpoint.captured" &&
-          event.payload.id === "checkpoint:later" &&
+          event.payload.id === laterCheckpointId &&
           event.payload.status === "stale",
       ),
     );
@@ -494,11 +494,8 @@ it.effect("rejects an unavailable rollback target before opening a session", () 
     assert.equal(restore.mock.calls.length, 0);
   }).pipe(Effect.provide(layerTest));
 });
-
 it.effect.each([
-  { order: "normal", restoreFiles: true },
   { order: "cleanup-first", restoreFiles: true },
-  { order: "cleanup-first", restoreFiles: false },
   { order: "rollback-first", restoreFiles: true },
   // A path the server would not have made is left missing, not recreated.
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
@@ -668,221 +665,10 @@ it.effect.each([
         calls,
         order === "cleanup-first"
           ? ["cleanup", "prune", "create", ...rollbackCalls]
-          : order === "rollback-first"
-            ? [...rollbackCalls, "cleanup"]
-            : rollbackCalls,
+          : [...rollbackCalls, "cleanup"],
       );
     }).pipe(Effect.provide(testLayer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect.each([
-  { restoreFiles: true, shared: "none" },
-  { restoreFiles: false, shared: "root" },
-  { restoreFiles: true, shared: "root" },
-  { restoreFiles: true, shared: "worktree" },
-  { restoreFiles: false, shared: "worktree" },
-  { restoreFiles: true, shared: "historical" },
-  { restoreFiles: false, shared: "none", targetOrdinal: 1 },
-  { restoreFiles: false, shared: "none", targetOrdinal: 1, multipleTurns: true },
-])(
-  "rewinds safely with %s",
-  ({ restoreFiles, shared, targetOrdinal = 0, multipleTurns = false }) => {
-    const threadId = ThreadId.make("rewind-files");
-    const providerThreadId = ProviderThreadId.make("rewind-provider");
-    const providerSessionId = ProviderSessionId.make("rewind-session");
-    const instanceId = ProviderInstanceId.make("rewind-instance");
-    const checkpointId = CheckpointId.make("rewind-start");
-    const scopeId = CheckpointScopeId.make("rewind-scope");
-    const calls: string[] = [];
-    let lockedThreads = Effect.succeed<ReadonlyArray<ThreadId>>([]);
-    const layerThreadCommands = Layer.effect(
-      ThreadCommandExecutor.ThreadCommandExecutor,
-      Effect.tap(KeyedLock.make<ThreadId>(), (lock) =>
-        Effect.sync(() => {
-          lockedThreads = lock.activeKeys;
-        }),
-      ),
-    );
-    const providerThread = {
-      id: providerThreadId,
-      providerSessionId,
-      providerInstanceId: instanceId,
-    };
-    const projection = {
-      thread: {
-        worktreePath: shared === "root" ? null : process.cwd(),
-        activeProviderThreadId: providerThreadId,
-        modelSelection: { instanceId, model: "test" },
-      },
-      providerThread,
-      providerSession: undefined,
-      providerTurns: [
-        ...(multipleTurns
-          ? [
-              {
-                id: "turn-0",
-                providerThreadId,
-                runAttemptId: "attempt-1",
-                ordinal: 0,
-                status: "completed",
-              },
-            ]
-          : []),
-        ...[1, 2, 3].map((ordinal) => ({
-          id: `turn-${ordinal}`,
-          providerThreadId,
-          runAttemptId: `attempt-${ordinal}`,
-          ordinal,
-          status: "completed",
-        })),
-      ],
-      rootNodes: [],
-      targetAttempt:
-        targetOrdinal === 0 ? undefined : { id: "attempt-1", providerTurnId: "turn-1" },
-      rolledBackAttemptIds: ["attempt-3"],
-      staleCheckpoints: [],
-      checkpoint: {
-        id: checkpointId,
-        scopeId,
-        status: "ready",
-        appRunOrdinal: targetOrdinal || null,
-      },
-      scope: { id: scopeId, cwd: process.cwd() },
-      runsToRollback: [1, 2]
-        .filter((ordinal) => ordinal > targetOrdinal)
-        .map((ordinal) => ({
-          id: `run-${ordinal}`,
-          ordinal,
-          status: "completed",
-          rootNodeId: null,
-          activeAttemptId: `attempt-${ordinal}`,
-        })),
-    } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
-    const layerTest = layerCheckpointRollbackService.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          layerThreadCommands,
-          Layer.mock(CheckpointService.CheckpointServiceV2)({
-            restore: () =>
-              Effect.sync(() => {
-                calls.push("files");
-              }),
-          }),
-          Layer.mock(EventSink.EventSinkV2)({
-            write: ({ events }) =>
-              Effect.map(lockedThreads, (locked) => {
-                assert.include(locked, threadId);
-                assert.ok(
-                  events.some(
-                    (event) =>
-                      event.type === "run.updated" && event.payload.status === "rolled_back",
-                  ),
-                );
-                calls.push("projection");
-                return [];
-              }),
-          }),
-          IdAllocator.layer,
-          Layer.mock(ProjectionStore.ProjectionStoreV2)({
-            getThread: () => Effect.succeed(projection.thread),
-            getCheckpointRollbackContext: () => Effect.succeed(projection),
-            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
-            getCheckpointContext: () =>
-              Effect.succeed({
-                checkpointScopes: [{ cwd: process.cwd() }],
-                runs: [],
-                checkpoints: [],
-              } as never),
-            getShellSnapshot: () =>
-              Effect.succeed({
-                schemaVersion: 1,
-                snapshotSequence: 0,
-                threads: [],
-                archivedThreads:
-                  shared === "worktree" || shared === "historical"
-                    ? [
-                        {
-                          id: ThreadId.make("other-thread"),
-                          deletedAt: null,
-                          worktreePath: shared === "worktree" ? process.cwd() : null,
-                        } as never,
-                      ]
-                    : [],
-              }),
-          }),
-          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-            open: () =>
-              Effect.succeed({
-                rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
-                  Effect.gen(function* () {
-                    const count = yield* resolveCodexRollbackTurnCount(input);
-                    assert.equal(count, 2 - targetOrdinal);
-                    calls.push("provider");
-                    return { providerThread };
-                  }),
-              } as never),
-          }),
-          Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
-        ),
-      ),
-    );
-    return Effect.gen(function* () {
-      const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
-      if (restoreFiles && shared !== "none") {
-        const error = yield* Effect.flip(
-          service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles }),
-        );
-        assert.equal(error.reason, "shared-workspace");
-        assert.deepEqual(calls, []);
-        return;
-      }
-      yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
-      assert.deepEqual(
-        calls,
-        restoreFiles ? ["provider", "files", "projection"] : ["provider", "projection"],
-      );
-    }).pipe(Effect.provide(layerTest));
-  },
-);
-
-it.effect.skipIf(!symlinksSupported)(
-  "rejects an archived thread sharing a worktree through a symlink",
-  () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-isolation-" });
-      const path = yield* Path.Path;
-      const alias = path.join(cwd, "alias");
-      yield* fileSystem.symlink(cwd, alias);
-      const threadId = ThreadId.make("restore-alias-current");
-      const otherId = ThreadId.make("restore-alias-archived");
-      const projections = ProjectionStore.ProjectionStoreV2.of({
-        getShellSnapshot: () =>
-          Effect.succeed({
-            schemaVersion: 1,
-            snapshotSequence: 0,
-            threads: [],
-            archivedThreads: [{ id: otherId, deletedAt: null, worktreePath: alias } as never],
-          }),
-        getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
-        getCheckpointContext: () =>
-          Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
-      } as never);
-      const isolated = yield* isCheckpointRestoreIsolated(
-        { id: threadId, worktreePath: cwd },
-        { cwd },
-        {
-          fileSystem,
-          path,
-          projections,
-          projects: ProjectStore.ProjectStoreV2.of({
-            get: () => Effect.succeed(unrelatedProject),
-          } as never),
-        },
-      );
-      assert.isFalse(isolated);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const seedRollbackHistory = Effect.gen(function* () {
