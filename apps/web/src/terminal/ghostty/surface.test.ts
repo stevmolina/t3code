@@ -292,6 +292,19 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelection()).toBe("");
   });
 
+  it("keeps a selection through program redraws and ends it when the user types", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("login link");
+    surface.selectAll();
+    surface.write("\x1b[1;1H\x1b[2Klogin link");
+    expect(surface.getSelection()).toBe("login link");
+    key(surface, "Enter", "Enter");
+    expect(harness.onData).toHaveBeenLastCalledWith("\r");
+    expect(surface.hasSelection()).toBe(false);
+  });
+
   it("suppresses local shortcut releases in Kitty sessions, including read-only observers", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();
