@@ -1,8 +1,16 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import {
+  sourceControlClients,
+  type ReferenceAutolink,
+} from "@t3tools/client-runtime/source-control-clients";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { createContext, useContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -15,13 +23,13 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
-  repositoryUrl: string | null;
+  autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
   threadRef: ScopedThreadRef | null;
   /** The folder the thread's file panel opens paths from, when the panel sits beside a thread. */
   threadWorkspaceRoot?: string | null;
 } | null>(null);
 
-function PullRequestGitHubVideo({
+function PullRequestHostVideo({
   environmentId,
   cwd,
   url,
@@ -32,7 +40,7 @@ function PullRequestGitHubVideo({
   url: string;
   fetchUrl: string;
 }) {
-  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
+  const resource: AssetResource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: fetchUrl };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -64,7 +72,7 @@ export function PullRequestMarkdown({
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
-  const repositoryUrl = context?.repositoryUrl;
+  const autolinks = context?.autolinks;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   // The pull request's clone can sit inside the thread's folder, as one of several repositories
   // a project holds. The body's paths start at the clone; the file panel opens from the thread's
@@ -75,8 +83,8 @@ export function PullRequestMarkdown({
     threadWorkspaceRoot !== null && cloneInThread !== null && cloneInThread !== "."
       ? threadWorkspaceRoot
       : cwd;
-  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = repositoryUrl
-    ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
+  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = autolinks
+    ? [[remarkPullRequestAutolinks, { autolinks }]]
     : [];
   return (
     <div
@@ -98,19 +106,19 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
-              githubMedia
+              sourceControlMedia
             />
           );
         }
-        const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
-        if (githubMediaUrl !== null) {
+        const hostMedia = sourceControlClients.mediaUrl(segment.url);
+        if (segment.media === "video" && hostMedia !== null) {
           return (
-            <PullRequestGitHubVideo
+            <PullRequestHostVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
               cwd={cwd}
               url={segment.url}
-              fetchUrl={githubMediaUrl}
+              fetchUrl={hostMedia.fetchUrl}
             />
           );
         }
@@ -127,9 +135,7 @@ export function PullRequestMarkdown({
           );
         }
         return (
-          // A plain anchor rather than the page's openExternal button: the desktop window
-          // turns a blocked _blank into openExternal itself, and in a browser tab — where
-          // there is no shell to call — this is the only one of the two that goes anywhere.
+          // Desktop converts blocked _blank navigation to openExternal.
           <a
             key={segment.id}
             href={segment.url}
@@ -138,7 +144,9 @@ export function PullRequestMarkdown({
             className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
           >
             <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">Open attachment on GitHub</span>
+            <span className="min-w-0 flex-1 truncate">
+              Open attachment on {hostMedia?.definition.label ?? new URL(segment.url).hostname}
+            </span>
             <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </a>
         );

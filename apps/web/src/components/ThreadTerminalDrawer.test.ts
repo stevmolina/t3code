@@ -11,6 +11,7 @@ import {
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
+  synchronizeTerminalSession,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
@@ -118,5 +119,18 @@ it("keeps the selection while output is appended and clears it on a replay", () 
   });
   synchronizeTerminalOutput(terminal, redrawn, cursor);
   expect(terminal.write).toHaveBeenLastCalledWith("\u001b[6;1H\u001b[2K/ waiting for code");
+  expect(terminal.clearSelection).not.toHaveBeenCalled();
+});
+
+it("reports an attach failure that leaves the output unchanged", () => {
+  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
+  const previous = { ...EMPTY_TERMINAL_BUFFER_STATE, error: null };
+  const failed = { ...previous, error: "Terminal attach failed" };
+
+  expect(
+    synchronizeTerminalSession(terminal, previous, failed, INITIAL_TERMINAL_OUTPUT_CURSOR),
+  ).toBe(INITIAL_TERMINAL_OUTPUT_CURSOR);
+  expect(terminal.write).toHaveBeenCalledWith("\r\n[terminal] Terminal attach failed\r\n");
+  expect(terminal.resetAndWrite).not.toHaveBeenCalled();
   expect(terminal.clearSelection).not.toHaveBeenCalled();
 });
