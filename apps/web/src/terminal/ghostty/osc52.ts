@@ -6,11 +6,8 @@ const ESC = "\u001b";
 const MAX_PENDING_CHARS = 1 << 20;
 
 /**
- * Finds OSC 52 clipboard writes (`ESC ] 52 ; <target> ; <base64> BEL|ST`) in
- * terminal output. Programs that own the mouse, such as Claude Code or tmux,
- * copy their own selection this way. libghostty-vt parses and drops OSC 52, so
- * the surface scans the stream itself. Sequences may span output chunks.
- * Clipboard reads (`?`) are never answered.
+ * libghostty-vt drops OSC 52, so the surface scans the stream itself.
+ * Sequences may span chunks. Clipboard reads (`?`) are never answered.
  */
 export class TerminalClipboardScanner {
   private pending = "";
@@ -72,7 +69,7 @@ function trailingPrefix(data: string, from: number): string {
   return "";
 }
 
-export function decodeOsc52Body(body: string): string | null {
+function decodeOsc52Body(body: string): string | null {
   const separator = body.indexOf(";");
   if (separator === -1) return null;
   const payload = body.slice(separator + 1);

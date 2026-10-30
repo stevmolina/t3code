@@ -545,7 +545,6 @@
     "@effect/vitest": "catalog:",
     "@types/mdast": "^4.0.4",
     "@types/node": "catalog:",
-    "micromark-extension-math": "^3.1.0",
     "micromark-util-types": "catalog:",
     "vite-plus": "catalog:"
   }
