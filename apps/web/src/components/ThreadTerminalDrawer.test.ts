@@ -11,6 +11,7 @@ import {
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
+  synchronizeTerminalSession,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
@@ -39,7 +40,13 @@ describe("terminal selection actions", () => {
 });
 
 it("retains visible output and selection until a replacement subscription receives its snapshot", () => {
-  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
+  const terminal = {
+    resetAndWrite: vi.fn(),
+    write: vi.fn(),
+    getSelection: vi.fn(() => "selected"),
+    getSelectionCellCount: vi.fn(() => 8),
+    clearSelection: vi.fn(),
+  };
   const snapshot = {
     threadId: "thread",
     terminalId: "term-1",
@@ -88,35 +95,23 @@ it("retains visible output and selection until a replacement subscription receiv
   expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
 });
 
-it("keeps the selection while output is appended and clears it on a replay", () => {
-  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
-  const attached = applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
-    type: "snapshot",
-    snapshot: {
-      threadId: "thread",
-      terminalId: "term-1",
-      cwd: "/repo",
-      worktreePath: null,
-      status: "running",
-      pid: 123,
-      history: "Open this URL to log in",
-      exitCode: null,
-      exitSignal: null,
-      label: "Terminal 1",
-      updatedAt: "2026-10-21T00:00:00.000Z",
-    },
-  });
-  const cursor = synchronizeTerminalOutput(terminal, attached, INITIAL_TERMINAL_OUTPUT_CURSOR);
-  expect(terminal.clearSelection).toHaveBeenCalledTimes(1);
-  terminal.clearSelection.mockClear();
+it("reports an attach failure that leaves the output unchanged", () => {
+  const terminal = {
+    resetAndWrite: vi.fn(),
+    write: vi.fn(),
+    getSelection: vi.fn(() => "selected"),
+    getSelectionCellCount: vi.fn(() => 8),
+    clearSelection: vi.fn(),
+  };
+  const previous = { ...EMPTY_TERMINAL_BUFFER_STATE, error: null };
+  const failed = { ...previous, error: "Terminal attach failed" };
 
-  const redrawn = applyTerminalAttachStreamEvent(attached, {
-    type: "output",
-    threadId: "thread",
-    terminalId: "term-1",
-    data: "\u001b[6;1H\u001b[2K/ waiting for code",
-  });
-  synchronizeTerminalOutput(terminal, redrawn, cursor);
-  expect(terminal.write).toHaveBeenLastCalledWith("\u001b[6;1H\u001b[2K/ waiting for code");
+  expect(
+    synchronizeTerminalSession(terminal, previous, failed, INITIAL_TERMINAL_OUTPUT_CURSOR),
+  ).toBe(INITIAL_TERMINAL_OUTPUT_CURSOR);
+  expect(terminal.write).toHaveBeenCalledWith("\r\n[terminal] Terminal attach failed\r\n");
+  expect(terminal.resetAndWrite).not.toHaveBeenCalled();
+  expect(terminal.getSelection).not.toHaveBeenCalled();
+  expect(terminal.getSelectionCellCount).not.toHaveBeenCalled();
   expect(terminal.clearSelection).not.toHaveBeenCalled();
 });

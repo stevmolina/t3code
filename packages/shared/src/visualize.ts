@@ -1,14 +1,8 @@
 import type { HtmlRenderReference } from "./htmlRender.ts";
 
 /**
- * Codex's Visualize skill has the agent write an HTML fragment to a file and
- * cite it on its own line of the reply:
- *
- *   U+E200 "visualize" U+E202 {"path":"/abs/chart.html","mode":"wide","title":"…"} U+E201
- *
- * When the message completes, the Codex adapter copies each cited fragment into
- * a thread attachment and records its id on the citation, so the message keeps
- * showing what it showed then. Clients render only citations that carry one.
+ * Codex's Visualize skill cites an HTML fragment file on its own reply line. The adapter
+ * snapshots it into a thread attachment and records the id; clients render only cited ids.
  */
 
 export interface VisualizeCitation {

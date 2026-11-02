@@ -1,3 +1,4 @@
+// oxlint-disable-next-line t3code/no-dom-test-environment -- custom-build test of the annotation editor needs a DOM
 // @vitest-environment jsdom
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
