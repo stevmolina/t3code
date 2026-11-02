@@ -255,7 +255,10 @@ describe("serializeRenderedMarkdownFragment", () => {
       getRangeAt: () => ({
         collapsed: false,
         cloneContents: () => new FakeText("12"),
-        commonAncestorContainer: { nodeType: ELEMENT_NODE, closest: () => formula },
+        commonAncestorContainer: {
+          nodeType: ELEMENT_NODE,
+          closest: (selector: string) => (selector === "[data-markdown-mermaid]" ? null : formula),
+        },
       }),
     } as unknown as Selection);
 

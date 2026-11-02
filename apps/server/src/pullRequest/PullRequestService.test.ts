@@ -1802,10 +1802,11 @@ it.effect("routes a hosted reference to another repository through a project on 
       );
     assert.isAbove(readsPerReference, 2);
     yield* service.withSharedProjectReads(Effect.all([read(8), read(9), read(10)]));
-    // One read of the project and one of the host's projects, for all three references.
-    assert.strictEqual(projectReads, readsPerReference + 2);
+    // One read of the project, one of the host's projects, and one of the project's folder for
+    // its nested clones, for all three references.
+    assert.strictEqual(projectReads, readsPerReference + 3);
     yield* read(11);
-    assert.strictEqual(projectReads, readsPerReference * 2 + 2);
+    assert.strictEqual(projectReads, readsPerReference * 2 + 3);
   }),
 );
 

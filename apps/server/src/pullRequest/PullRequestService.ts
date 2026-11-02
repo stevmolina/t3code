@@ -345,6 +345,7 @@ interface WorkspaceProjects {
 const sharedProjectReads = Context.Reference<{
   open: boolean;
   readonly reads: Map<string, Effect.Effect<WorkspaceProjects, PullRequestError>>;
+  readonly shells: Map<string, Effect.Effect<Option.Option<OrchestrationProjectShell>>>;
 } | null>("t3/PullRequestService/sharedProjectReads", { defaultValue: () => null });
 
 interface RepositoryBatch {
@@ -856,15 +857,30 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  const readProjectShell = (projectId: ProjectId) =>
+    Effect.flatMap(sharedProjectReads, (shared) => {
+      const read = projects
+        .getShell(projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
+      if (shared === null || !shared.open) return read;
+      const existing = shared.shells.get(projectId);
+      if (existing !== undefined) return existing;
+      return Effect.cached(read).pipe(
+        Effect.tap((cached) => Effect.sync(() => shared.shells.set(projectId, cached))),
+        Effect.flatten,
+      );
+    });
+
   const withSharedProjectReads = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.suspend(() => {
-      const shared = { open: true, reads: new Map() };
+      const shared = { open: true, reads: new Map(), shells: new Map() };
       return effect.pipe(
         Effect.provideService(sharedProjectReads, shared),
         Effect.ensuring(
           Effect.sync(() => {
             shared.open = false;
             shared.reads.clear();
+            shared.shells.clear();
           }),
         ),
       );
@@ -1074,9 +1090,7 @@ export const make = Effect.gen(function* () {
     supported: ReadonlyArray<SupportedProject>,
   ) {
     if (supported.some((candidate) => candidate.repositoryKey === repositoryKey)) return supported;
-    const selected = yield* projects
-      .getShell(projectId)
-      .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
+    const selected = yield* readProjectShell(projectId);
     if (Option.isNone(selected)) return supported;
     for (const checkout of yield* findNestedCheckouts(
       fileSystem,
