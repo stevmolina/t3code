@@ -4,7 +4,11 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type { ChatAttachment } from "@t3tools/contracts";
-import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  htmlRenderFromToolItem,
+  mcpAppFromToolItem,
+  previewRecordingIdFromToolItem,
+} from "@t3tools/shared/toolOutput";
 import { findVisualizeCitations } from "@t3tools/shared/visualize";
 
 import {
@@ -14,7 +18,7 @@ import {
 import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts";
 
 const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
-const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
+export const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 const ATTACHMENT_ID_THREAD_SEGMENT_PATTERN = "[a-z0-9_]+(?:-[a-z0-9_]+)*";
 const ATTACHMENT_ID_UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const ATTACHMENT_ID_FILE_EXTENSION_PATTERN = "[a-z0-9]{1,10}";
@@ -142,9 +146,10 @@ export function threadHtmlRenderAttachmentIds(
   const segment = toSafeThreadAttachmentSegment(threadId);
   if (segment === null) return [];
   return Array.from(items).flatMap((item) => {
-    const tool = { toolName: item.toolName, output: item.output };
     return [
-      htmlRenderFromToolItem(tool)?.attachmentId ?? mcpAppFromToolItem(tool)?.attachmentId,
+      htmlRenderFromToolItem(item)?.attachmentId ??
+        mcpAppFromToolItem(item)?.attachmentId ??
+        previewRecordingIdFromToolItem(item),
       ...findVisualizeCitations(item.text ?? "").map((citation) => citation.attachmentId),
     ].filter(
       (attachmentId): attachmentId is string =>
