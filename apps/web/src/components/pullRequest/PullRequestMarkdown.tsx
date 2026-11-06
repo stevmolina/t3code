@@ -26,6 +26,8 @@ export const PullRequestMarkdownContext = createContext<{
   threadRef: ScopedThreadRef | null;
   /** The folder the thread's file panel opens paths from, when the panel sits beside a thread. */
   threadWorkspaceRoot?: string | null;
+  /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
+  repository: string | null;
 } | null>(null);
 
 function PullRequestHostVideo({
@@ -33,13 +35,20 @@ function PullRequestHostVideo({
   cwd,
   url,
   fetchUrl,
+  repository,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
+  repository: string | undefined;
 }) {
-  const resource: AssetResource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: fetchUrl };
+  const resource: AssetResource = {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd,
+    url: fetchUrl,
+    ...(repository ? { repository } : {}),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -76,6 +85,7 @@ export function PullRequestMarkdown({
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
+  const repository = context?.repository ?? undefined;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   // The pull request's clone can sit inside the thread's folder, as one of several repositories
   // a project holds. The body's paths start at the clone; the file panel opens from the thread's
@@ -108,6 +118,7 @@ export function PullRequestMarkdown({
               {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
+              sourceControlMediaRepository={repository}
               onTaskListChange={
                 onTaskListChange && segment.kind === "markdown"
                   ? ({ markerOffset, checked }) =>
@@ -129,6 +140,7 @@ export function PullRequestMarkdown({
               cwd={cwd}
               url={segment.url}
               fetchUrl={hostMedia.fetchUrl}
+              repository={repository}
             />
           );
         }

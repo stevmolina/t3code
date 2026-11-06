@@ -68,6 +68,7 @@
         "@t3tools/web",
         "@napi-rs/keyring",
         "ffi-rs",
+        "transcribe-cpp",
       ],
     },
     "apps/desktop": {
@@ -116,12 +117,17 @@
         "src/features/browser/preview-stream.browser.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
+      // generate:nitro runs the nitrogen binary after cd, which knip does not trace.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
-        "@t3tools/mobile-highlights-native",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
+        "nitrogen",
       ],
+    },
+    "apps/mobile/modules/t3-highlights": {
+      // Nitrogen discovers HybridObject specifications by filename.
+      "entry": ["src/*.nitro.ts!"],
     },
     "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.
