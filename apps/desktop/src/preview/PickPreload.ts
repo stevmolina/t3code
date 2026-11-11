@@ -33,6 +33,7 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   RECORDING_KEY_CHANNEL,
@@ -216,6 +217,26 @@ const isolateAnnotationEditing = (event: Event): void => {
 for (const type of ["keydown", "keypress", "copy", "cut", "paste", "beforeinput"]) {
   window.addEventListener(type, isolateAnnotationEditing, true);
 }
+
+// Capture runs before a page can stop the event; the task delay lets every page
+// listener call preventDefault before the host is told the key went unhandled.
+const reportUnhandledShortcut = (event: KeyboardEvent): void => {
+  if (!event.isTrusted || event.repeat || event.isComposing) return;
+  if (!event.metaKey && !event.ctrlKey && !event.altKey && !/^F\d{1,2}$/u.test(event.key)) return;
+  setTimeout(() => {
+    if (event.defaultPrevented) return;
+    ipcRenderer.send(PAGE_UNHANDLED_SHORTCUT_CHANNEL, {
+      key: event.key,
+      code: event.code,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+    });
+  }, 0);
+};
+
+window.addEventListener("keydown", reportUnhandledShortcut, true);
 
 const MOUSE_BUTTON_BACK = 3;
 const MOUSE_BUTTON_FORWARD = 4;

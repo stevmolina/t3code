@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/htmlRender";
 import { VISUALIZE_FOLLOW_UP_METHOD } from "@t3tools/shared/visualize";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -37,16 +37,13 @@ export function VisualizeFrame(props: {
   readonly fallback: ReactNode;
 }) {
   const { attachmentId, title } = props.render;
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId,
-      fileName: htmlRenderFileName(title),
-      mimeType: "text/html",
-      disposition: "inline" as const,
-    }),
-    [attachmentId, title],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId,
+    fileName: htmlRenderFileName(title),
+    mimeType: "text/html",
+    disposition: "inline" as const,
+  };
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   // The page keeps its first URL: a re-minted one would reload it and drop its state.
   const [src, setSrc] = useState<string | null>(null);
@@ -58,6 +55,7 @@ export function VisualizeFrame(props: {
   const boxRef = useRef<HTMLDivElement>(null);
   const composerRef = useComposerHandleContext();
   const expanded = expandedSrc !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a window message listener for page follow-up prompts while mounted
   useEffect(() => {
     // Gated like a page's link: its own focused frame, right after the reader used it.
     const draftFollowUp = (event: MessageEvent) => {
@@ -116,7 +114,7 @@ export function VisualizeFrame(props: {
           {expandedSrc !== null ? (
             <HtmlRenderDialog
               src={expandedSrc}
-              title={title}
+              htmlRender={props.render}
               threadRef={props.threadRef}
               onClose={() => setExpandedSrc(null)}
             />
