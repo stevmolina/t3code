@@ -1688,6 +1688,15 @@ function startAnnotation(
     }
     return false;
   };
+  const onToolKey = (event: KeyboardEvent): void => {
+    if (shadowRoot.activeElement?.matches("input, textarea, select")) return;
+    if (event.key === "v") tool = "select";
+    else if (event.key === "r") tool = "marquee";
+    else if (event.key === "d") tool = "draw";
+    else if (event.key === "e") tool = "erase";
+    else return;
+    refreshToolButtons();
+  };
   const onKeyDown = (event: KeyboardEvent): void => {
     if (onVoiceKey(event)) return;
     if (event.key === "Escape") {
@@ -1696,12 +1705,7 @@ function startAnnotation(
       teardown(true);
       return;
     }
-    if (event.key === "v") tool = "select";
-    else if (event.key === "r") tool = "marquee";
-    else if (event.key === "d") tool = "draw";
-    else if (event.key === "e") tool = "erase";
-    else return;
-    refreshToolButtons();
+    onToolKey(event);
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
@@ -1787,7 +1791,10 @@ function startAnnotation(
     }
     const submission =
       shadowRoot.activeElement === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    if (!submission) return;
+    if (!submission) {
+      onToolKey(event);
+      return;
+    }
     event.preventDefault();
     submitAnnotation(submission);
   };

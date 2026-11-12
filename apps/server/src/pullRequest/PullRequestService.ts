@@ -474,32 +474,37 @@ function withRateLimitBackoff(
   const protect = <A>(
     operation: string,
     effect: Effect.Effect<A, PullRequestProviderError>,
-    allowPaused: boolean,
+    alwaysInteractive: boolean,
   ) =>
-    limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
-      Effect.mapError(
-        (error) =>
-          new PullRequestProviderError({
-            provider: api.kind,
-            operation,
-            reason: "rate-limited",
-            detail: error.detail,
-            retryAt: error.retryAt,
-            cause: error,
-          }),
-      ),
-      Effect.flatMap((lease) =>
-        effect.pipe(
-          Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
-          Effect.tap(() => limits.recordSuccess({ ...key, lease })),
-          Effect.tapError((error) =>
-            error.reason === "rate-limited"
-              ? limits.recordRateLimit({
-                  ...key,
-                  lease,
-                  ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-                })
-              : Effect.void,
+    SourceControlRateLimit.Interactive.pipe(
+      Effect.map((callerInteractive) => alwaysInteractive || callerInteractive),
+      Effect.flatMap((allowPaused) =>
+        limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
+          Effect.mapError(
+            (error) =>
+              new PullRequestProviderError({
+                provider: api.kind,
+                operation,
+                reason: "rate-limited",
+                detail: error.detail,
+                retryAt: error.retryAt,
+                cause: error,
+              }),
+          ),
+          Effect.flatMap((lease) =>
+            effect.pipe(
+              Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
+              Effect.tap(() => limits.recordSuccess({ ...key, lease })),
+              Effect.tapError((error) =>
+                error.reason === "rate-limited"
+                  ? limits.recordRateLimit({
+                      ...key,
+                      lease,
+                      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                    })
+                  : Effect.void,
+              ),
+            ),
           ),
         ),
       ),
@@ -508,10 +513,10 @@ function withRateLimitBackoff(
     <Args extends ReadonlyArray<unknown>, A>(
       operation: string,
       call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
-      allowPaused = false,
+      alwaysInteractive = false,
     ) =>
     (...args: Args) =>
-      protect(operation, call(...args), allowPaused);
+      protect(operation, call(...args), alwaysInteractive);
   const interactive = <Args extends ReadonlyArray<unknown>, A>(
     operation: string,
     call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
@@ -1028,8 +1033,11 @@ export const make = Effect.gen(function* () {
         return listWorkspaceProjects(
           sourceControlDefinitions.findByRepositoryKey(referenceKey) ? {} : { host },
         ).pipe(
+          // Only a project folder that is not itself a checkout can hold the clone.
           Effect.flatMap(({ supported }) =>
-            withNestedCheckout(ref.projectId, host, repository, repositoryKey, supported),
+            own === undefined
+              ? withNestedCheckout(ref.projectId, host, repository, repositoryKey, supported)
+              : Effect.succeed(supported),
           ),
           Effect.flatMap((supported) => {
             const onHost = supported.filter((candidate) => candidate.host === host);
@@ -1116,7 +1124,9 @@ export const make = Effect.gen(function* () {
     )) {
       const identity = yield* repositoryIdentities.resolve(checkout);
       const keys = [identity?.canonicalKey, identity?.origin?.canonicalKey].flatMap((key) =>
-        key === undefined ? [] : [canonicalRepositoryKey(key.toLowerCase())],
+        key === undefined
+          ? []
+          : [sourceControlDefinitions.canonicalRepositoryKey(key.toLowerCase())],
       );
       const kind = identity?.provider as SourceControlProviderKind | undefined;
       const api = kind === undefined ? null : registry.get(kind);
@@ -1128,7 +1138,7 @@ export const make = Effect.gen(function* () {
           api: withRateLimitBackoff(api, host, rateLimits),
           repository,
           host,
-          remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+          remote: sourceControlDefinitions.repositoryKeyFromRemote(`https://${host}/${repository}`),
           repositoryKey,
         },
         ...supported,

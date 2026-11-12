@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -107,5 +105,31 @@ describe("annotation fields on a page that traps editing events", () => {
     input.remove();
     expect(event.defaultPrevented).toBe(true);
     expect(page).toHaveBeenCalledOnce();
+  });
+});
+
+describe("annotation tool keys", () => {
+  const toolAttribute = () => document.documentElement.getAttribute("data-t3code-annotation-tool");
+
+  it("switches tools from the keyboard after a toolbar button is clicked", () => {
+    startAnnotation();
+    const region = Array.from(annotationRoot.querySelectorAll("button")).find(
+      (button) => button.textContent === "Region",
+    );
+    if (!region) throw new Error("Region toolbar button not found");
+
+    region.focus();
+    region.click();
+    expect(toolAttribute()).toBe("marquee");
+
+    region.dispatchEvent(editingEvent("keydown", { key: "v" }));
+    expect(toolAttribute(), "V should switch to Select while focus is on a toolbar button").toBe(
+      "select",
+    );
+  });
+
+  it("keeps the tool while typing a tool key in the comment", () => {
+    startAnnotation().dispatchEvent(editingEvent("keydown", { key: "r" }));
+    expect(toolAttribute()).toBe("select");
   });
 });

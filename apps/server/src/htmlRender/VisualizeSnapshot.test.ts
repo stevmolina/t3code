@@ -24,7 +24,7 @@ const setup = Effect.gen(function* () {
   const stored = (text: string) =>
     Effect.forEach(findVisualizeCitations(text), ({ attachmentId }) =>
       attachmentId === undefined
-        ? Effect.succeed(undefined)
+        ? Effect.undefined
         : fileSystem.readFileString(resolveAttachmentPathById({ attachmentsDir, attachmentId })!),
     );
   return { fileSystem, write, snapshot, stored };

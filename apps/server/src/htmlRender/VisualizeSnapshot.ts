@@ -66,33 +66,36 @@ function visualizePage(fragment: string): string {
 }
 
 /** Copies one fragment into the thread's attachments. Undefined when the file is not a fragment. */
-const snapshotFragment = (attachmentsDir: string, threadId: ThreadId, path: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const info = yield* fileSystem.stat(path);
-    if (info.type !== "File" || Number(info.size) > MAX_FRAGMENT_BYTES) return undefined;
-    // The file can grow after `stat`, so the read stops one byte past the limit.
-    const bytes = yield* fileSystem
-      .stream(path, { bytesToRead: MAX_FRAGMENT_BYTES + 1 })
-      .pipe(Stream.mkUint8Array);
-    const fragment = new TextDecoder().decode(bytes);
-    if (bytes.byteLength > MAX_FRAGMENT_BYTES || fragment.includes("\0")) return undefined;
-    if (DOCUMENT_MARKUP.test(fragment)) return undefined;
-    const page = visualizePage(fragment);
-    // Named for its content, so completing the same reply twice stores one page
-    // and yields the same text, and a rewritten file never changes an old reply.
-    const stableId = createDeterministicAttachmentId(threadId, `visualize:${page}`);
-    const attachmentId = stableId === null ? null : `${stableId}-html`;
-    const filePath =
-      attachmentId === null
-        ? null
-        : resolveAttachmentRelativePath({ attachmentsDir, relativePath: `${attachmentId}.html` });
-    if (attachmentId === null || filePath === null) return undefined;
-    yield* fileSystem
-      .writeFileString(filePath, page)
-      .pipe(Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)));
-    return attachmentId;
-  });
+const snapshotFragment = Effect.fn("VisualizeSnapshot.snapshotFragment")(function* (
+  attachmentsDir: string,
+  threadId: ThreadId,
+  path: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const info = yield* fileSystem.stat(path);
+  if (info.type !== "File" || Number(info.size) > MAX_FRAGMENT_BYTES) return undefined;
+  // The file can grow after `stat`, so the read stops one byte past the limit.
+  const bytes = yield* fileSystem
+    .stream(path, { bytesToRead: MAX_FRAGMENT_BYTES + 1 })
+    .pipe(Stream.mkUint8Array);
+  const fragment = new TextDecoder().decode(bytes);
+  if (bytes.byteLength > MAX_FRAGMENT_BYTES || fragment.includes("\0")) return undefined;
+  if (DOCUMENT_MARKUP.test(fragment)) return undefined;
+  const page = visualizePage(fragment);
+  // Named for its content, so completing the same reply twice stores one page
+  // and yields the same text, and a rewritten file never changes an old reply.
+  const stableId = createDeterministicAttachmentId(threadId, `visualize:${page}`);
+  const attachmentId = stableId === null ? null : `${stableId}-html`;
+  const filePath =
+    attachmentId === null
+      ? null
+      : resolveAttachmentRelativePath({ attachmentsDir, relativePath: `${attachmentId}.html` });
+  if (attachmentId === null || filePath === null) return undefined;
+  yield* fileSystem
+    .writeFileString(filePath, page)
+    .pipe(Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)));
+  return attachmentId;
+});
 
 /**
  * Stores the fragment behind each Visualize citation in `text` and records its

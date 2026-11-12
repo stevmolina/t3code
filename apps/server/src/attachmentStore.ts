@@ -146,10 +146,11 @@ export function threadHtmlRenderAttachmentIds(
   const segment = toSafeThreadAttachmentSegment(threadId);
   if (segment === null) return [];
   return Array.from(items).flatMap((item) => {
+    const toolItem = { toolName: item.toolName, output: item.output };
     return [
-      htmlRenderFromToolItem(item)?.attachmentId ??
-        mcpAppFromToolItem(item)?.attachmentId ??
-        previewRecordingIdFromToolItem(item),
+      htmlRenderFromToolItem(toolItem)?.attachmentId ??
+        mcpAppFromToolItem(toolItem)?.attachmentId ??
+        previewRecordingIdFromToolItem(toolItem),
       ...findVisualizeCitations(item.text ?? "").map((citation) => citation.attachmentId),
     ].filter(
       (attachmentId): attachmentId is string =>
