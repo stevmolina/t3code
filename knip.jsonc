@@ -99,6 +99,8 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
+      // The i18n scripts invoke the gt CLI, which Knip does not resolve.
+      "ignoreDependencies": ["gt"],
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
       "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs"],
@@ -128,6 +130,8 @@
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
         "nitrogen",
+        // The i18n scripts invoke the gt CLI, which Knip does not resolve.
+        "gt",
       ],
     },
     "apps/mobile/modules/t3-highlights": {
