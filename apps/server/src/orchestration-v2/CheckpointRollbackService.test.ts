@@ -12,7 +12,6 @@ import {
   RunAttemptId,
   RunId,
   CheckpointScopeId,
-  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
