@@ -90,6 +90,15 @@ describe("annotation fields on a page that traps editing events", () => {
     expect(ipc.send).toHaveBeenCalledWith(ELEMENT_PICKED_CHANNEL, null);
   });
 
+  it("keeps the annotation when Escape dismisses an IME candidate", () => {
+    const comment = startAnnotation();
+    comment.value = "draft";
+    comment.dispatchEvent(editingEvent("keydown", { key: "Escape", isComposing: true }));
+    expect(annotationRoot.host.isConnected).toBe(true);
+    expect(comment.value).toBe("draft");
+    expect(ipc.send).not.toHaveBeenCalledWith(ELEMENT_PICKED_CHANNEL, null);
+  });
+
   it("still submits the comment on Enter", () => {
     const event = editingEvent("keydown", { key: "Enter" });
     startAnnotation().dispatchEvent(event);
